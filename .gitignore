@@ -1,0 +1,56 @@
+# =====================================
+# IDE AND EDITORS
+# =====================================
+.idea/
+**/.idea/
+*.iml
+.vscode/
+.history/
+
+# =====================================
+# ENVIRONMENT & SECRETS
+# =====================================
+**/.env
+**/.env.*
+!**/.env.example
+
+# =====================================
+# ANGULAR FRONTEND
+# =====================================
+Frontend/dist/
+Frontend/tmp/
+Frontend/out-tsc/
+Frontend/bazel-out/
+Frontend/node_modules/
+Frontend/npm-debug.log
+Frontend/yarn-error.log
+Frontend/.angular/
+Frontend/.sass-cache/
+Frontend/coverage/
+Frontend/connect.lock
+Frontend/libpeerconnection.log
+Frontend/testem.log
+Frontend/typings/
+Frontend/__screenshots__/
+
+# =====================================
+# PYTHON BACKEND
+# =====================================
+Backend/.venv/
+Backend/venv/
+Backend/**/__pycache__/
+Backend/**/*.py[cod]
+Backend/.pytest_cache/
+Backend/.mypy_cache/
+Backend/.ruff_cache/
+Backend/.coverage
+Backend/coverage/
+Backend/storage/
+Backend/**/*.db
+
+# =====================================
+# SYSTEM FILES
+# =====================================
+.DS_Store
+Thumbs.db
+desktop.ini

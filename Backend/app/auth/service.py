@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
 
 import jwt
-from sqlalchemy import select
-from sqlalchemy import update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,10 +15,12 @@ from app.models.entities import RefreshToken, User
 from app.models.entities import Major
 
 
-def login(db: Session, student_id: str, password: str) -> tuple[User, str, str]:
-    user = db.scalar(select(User).where(User.student_id == student_id))
+def login(db: Session, identifier: str, password: str) -> tuple[User, str, str]:
+    """identifier có thể là MSSV hoặc email."""
+    identifier = identifier.strip()
+    user = db.scalar(select(User).where(or_(User.student_id == identifier, User.email == identifier)))
     if user is None or not verify_password(password, user.password_hash):
-        raise AppError(401, "INVALID_CREDENTIALS", "MSSV hoặc mật khẩu không chính xác")
+        raise AppError(401, "INVALID_CREDENTIALS", "MSSV/email hoặc mật khẩu không chính xác")
     if user.status != "ACTIVE":
         raise AppError(403, "ACCOUNT_LOCKED", "Tài khoản đã bị khóa")
     raw, expires = create_refresh_token(user.id)

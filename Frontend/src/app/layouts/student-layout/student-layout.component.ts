@@ -9,12 +9,14 @@ import { AuthService } from '../../core/services/auth.service';
   template: `
     <div class="app-shell">
       @if (menuOpen()) { <button class="mobile-scrim" aria-label="Đóng menu" (click)="menuOpen.set(false)"></button> }
-      <aside class="sidebar" [class.sidebar-open]="menuOpen()">
-        <a class="brand" routerLink="/" (click)="menuOpen.set(false)">
-          <span class="brand-mark"><svg lucideBookOpen></svg></span>
-          <span><strong>DUT<span class="brand-dot">.</span></strong><small>Kho tri thức sinh viên</small></span>
-          <button class="icon-button mobile-close" aria-label="Đóng menu" (click)="menuOpen.set(false); $event.preventDefault()"><svg lucideX></svg></button>
-        </a>
+      <aside class="sidebar" [class.sidebar-open]="menuOpen()" [class.sidebar-collapsed]="sidebarCollapsed()">
+        <div class="brand">
+          <a class="brand-link" routerLink="/" (click)="menuOpen.set(false)">
+            <span class="brand-mark"><svg lucideBookOpen></svg></span>
+            <span><strong>DUT<span class="brand-dot">.</span></strong><small>Kho tri thức sinh viên</small></span>
+          </a>
+          <button class="icon-button mobile-close" aria-label="Đóng menu" (click)="menuOpen.set(false)"><svg lucideX></svg></button>
+        </div>
         <div class="nav-caption">KHÔNG GIAN HỌC TẬP</div>
         <nav class="main-nav">
           <a routerLink="/" routerLinkActive="nav-active" [routerLinkActiveOptions]="{ exact: true }" (click)="menuOpen.set(false)"><svg lucideHouse></svg><span>Trang chủ</span></a>
@@ -34,7 +36,7 @@ import { AuthService } from '../../core/services/auth.service';
       </aside>
       <main class="main-area">
         <header class="topbar">
-          <button class="icon-button mobile-menu" aria-label="Mở menu" (click)="menuOpen.set(true)"><svg lucideMenu></svg></button>
+          <button class="icon-button mobile-menu" [attr.aria-label]="sidebarButtonLabel" (click)="toggleSidebar()"><svg lucideMenu></svg></button>
           <div class="breadcrumb"><span>Không gian học tập</span><span class="breadcrumb-sep">/</span><strong>{{ pageLabel }}</strong></div>
           <div class="topbar-actions">
             <a class="top-search" routerLink="/documents"><svg lucideSearch></svg><span>Tìm kiếm tài liệu</span><kbd>⌘ K</kbd></a>
@@ -49,7 +51,22 @@ import { AuthService } from '../../core/services/auth.service';
 })
 export class StudentLayoutComponent {
   readonly menuOpen = signal(false);
+  readonly sidebarCollapsed = signal(false);
   readonly auth = injectAuth();
+
+  get sidebarButtonLabel(): string {
+    return window.matchMedia('(max-width: 820px)').matches
+      ? 'Mở menu'
+      : this.sidebarCollapsed() ? 'Mở thanh bên' : 'Thu gọn thanh bên';
+  }
+
+  toggleSidebar(): void {
+    if (window.matchMedia('(max-width: 820px)').matches) {
+      this.menuOpen.update((open) => !open);
+    } else {
+      this.sidebarCollapsed.update((collapsed) => !collapsed);
+    }
+  }
 
   get initials(): string {
     return this.auth.user()?.fullName.split(' ').map((part) => part[0]).slice(-2).join('').toUpperCase() || 'SV';

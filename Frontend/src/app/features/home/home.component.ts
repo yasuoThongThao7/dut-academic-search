@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { LucideArrowRight, LucideBookOpen, LucideDownload, LucideFileText, LucideSearch, LucideStar, LucideUpload } from '@lucide/angular';
@@ -7,12 +7,13 @@ import { pageItems } from '../../core/services/api.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CatalogService } from '../../core/services/catalog.service';
 import { DocumentService } from '../../core/services/document.service';
+import { helpfulPercent as formatHelpfulPercent } from '../../core/utils/document-ui.utils';
 import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 
 @Component({
   selector: 'app-home',
-  imports: [DatePipe, DecimalPipe, RouterLink, FormsModule, LucideArrowRight, LucideBookOpen, LucideDownload, LucideFileText, LucideSearch, LucideStar, LucideUpload],
+  imports: [DatePipe, RouterLink, FormsModule, LucideArrowRight, LucideBookOpen, LucideDownload, LucideFileText, LucideSearch, LucideStar, LucideUpload],
   template: `
     <div class="home-page">
       <section class="welcome-row"><div><span class="eyebrow">THỨC DẬY CÙNG TRI THỨC</span><h1>Xin chào, {{ firstName }} <span class="wave">✦</span></h1><p class="muted">Không gian học tập của bạn hôm nay thế nào?</p></div><div class="welcome-date">{{ today }}</div></section>
@@ -27,18 +28,18 @@ import { FormsModule } from '@angular/forms';
         <div class="section-heading"><div><span class="eyebrow">MỚI NHẤT TRONG KHO</span><h2>Tài liệu mới nhất</h2><p class="muted">Những chia sẻ vừa được cộng đồng đóng góp.</p></div><a class="link-action" routerLink="/documents" [queryParams]="{ sort: 'recent' }">Xem tất cả <svg lucideArrowRight></svg></a></div>
         @if (loading()) { <div class="document-grid">@for (_ of [1,2,3]; track $index) { <div class="skeleton-card"><span class="skeleton-line"></span><span class="skeleton-line wide"></span><span class="skeleton-line"></span></div> }</div> }
         @else if (error()) { <div class="empty-state"><strong>Chưa thể tải tài liệu</strong><p>{{ error() }}</p><button class="btn btn-outline" (click)="load()">Thử lại</button></div> }
-        @else if (latest().length) { <div class="document-grid">@for (doc of latest(); track doc.id) { <a class="document-card" [routerLink]="['/documents', doc.id]"><div class="doc-card-top"><span class="doc-type">{{ doc.category?.name || doc.categoryCode || 'Tài liệu' }}</span><span class="doc-date">{{ doc.createdAt | date:'dd/MM/yyyy' }}</span></div><h3>{{ doc.title }}</h3><div class="doc-course">{{ doc.course?.code }}{{ doc.course?.code && doc.course?.name ? ' · ' : '' }}{{ doc.course?.name || 'Chưa gắn môn học' }}</div><div class="doc-card-footer"><span>{{ doc.uploader?.fullName || 'Sinh viên DUT' }}</span><span class="doc-stats"><span><svg lucideDownload></svg>{{ doc.downloadCount ?? '—' }}</span><span><svg lucideStar></svg>{{ doc.averageRating != null ? (doc.averageRating | number:'1.1-1') : '—' }}</span></span></div></a> }</div> }
+        @else if (latest().length) { <div class="document-grid">@for (doc of latest(); track doc.id) { <a class="document-card" [routerLink]="['/documents', doc.id]"><div class="doc-card-top"><span class="doc-type">{{ doc.category?.name || doc.categoryCode || 'Tài liệu' }}</span><span class="doc-date">{{ doc.createdAt | date:'dd/MM/yyyy' }}</span></div><h3>{{ doc.title }}</h3><div class="doc-course">{{ doc.course?.code }}{{ doc.course?.code && doc.course?.name ? ' · ' : '' }}{{ doc.course?.name || 'Chưa gắn môn học' }}</div><div class="doc-card-footer"><span>{{ doc.uploader?.fullName || 'Sinh viên DUT' }}</span><span class="doc-stats"><span><svg lucideDownload></svg>{{ doc.accessCount ?? '—' }}</span><span><svg lucideStar></svg>{{ helpfulPercent(doc) }}</span></span></div></a> }</div> }
         @else { <div class="empty-state"><strong>Chưa có tài liệu mới</strong><p>Tài liệu đã được duyệt sẽ xuất hiện tại đây.</p></div> }
       </section>
       <section class="content-section">
         <div class="section-heading"><div><span class="eyebrow">ĐƯỢC CỘNG ĐỒNG QUAN TÂM</span><h2>Tài liệu phổ biến</h2><p class="muted">Những tài liệu được sinh viên tìm đọc nhiều.</p></div><a class="link-action" routerLink="/documents" [queryParams]="{ sort: 'popular' }">Xem tất cả <svg lucideArrowRight></svg></a></div>
-        @if (popular().length) { <div class="document-grid">@for (doc of popular(); track doc.id) { <a class="document-card" [routerLink]="['/documents', doc.id]"><div class="doc-card-top"><span class="doc-type">{{ doc.category?.name || doc.categoryCode || 'Tài liệu' }}</span><span class="doc-date">{{ doc.createdAt | date:'dd/MM/yyyy' }}</span></div><h3>{{ doc.title }}</h3><div class="doc-course">{{ doc.course?.code }}{{ doc.course?.code && doc.course?.name ? ' · ' : '' }}{{ doc.course?.name || 'Chưa gắn môn học' }}</div><div class="doc-card-footer"><span>{{ doc.uploader?.fullName || 'Sinh viên DUT' }}</span><span class="doc-stats"><span><svg lucideDownload></svg>{{ doc.downloadCount ?? '—' }}</span><span><svg lucideStar></svg>{{ doc.averageRating != null ? (doc.averageRating | number:'1.1-1') : '—' }}</span></span></div></a> }</div> }
+        @if (popular().length) { <div class="document-grid">@for (doc of popular(); track doc.id) { <a class="document-card" [routerLink]="['/documents', doc.id]"><div class="doc-card-top"><span class="doc-type">{{ doc.category?.name || doc.categoryCode || 'Tài liệu' }}</span><span class="doc-date">{{ doc.createdAt | date:'dd/MM/yyyy' }}</span></div><h3>{{ doc.title }}</h3><div class="doc-course">{{ doc.course?.code }}{{ doc.course?.code && doc.course?.name ? ' · ' : '' }}{{ doc.course?.name || 'Chưa gắn môn học' }}</div><div class="doc-card-footer"><span>{{ doc.uploader?.fullName || 'Sinh viên DUT' }}</span><span class="doc-stats"><span><svg lucideDownload></svg>{{ doc.accessCount ?? '—' }}</span><span><svg lucideStar></svg>{{ helpfulPercent(doc) }}</span></span></div></a> }</div> }
         @else if (popularError()) { <div class="empty-state"><strong>Chưa thể tải tài liệu phổ biến</strong><p>{{ popularError() }}</p></div> }
         @else if (!loading()) { <div class="empty-state"><strong>Chưa có tài liệu phổ biến</strong><p>Dữ liệu sẽ được cập nhật theo hoạt động của sinh viên.</p></div> }
       </section>
       <section class="content-section">
-        <div class="section-heading"><div><span class="eyebrow">ĐÁNH GIÁ TÍCH CỰC</span><h2>Được đánh giá cao</h2><p class="muted">Tài liệu hữu ích được cộng đồng ghi nhận.</p></div><a class="link-action" routerLink="/documents" [queryParams]="{ sort: 'rating' }">Xem tất cả <svg lucideArrowRight></svg></a></div>
-        @if (topRated().length) { <div class="document-grid">@for (doc of topRated(); track doc.id) { <a class="document-card" [routerLink]="['/documents', doc.id]"><div class="doc-card-top"><span class="doc-type">{{ doc.category?.name || doc.categoryCode || 'Tài liệu' }}</span><span class="doc-date">{{ doc.createdAt | date:'dd/MM/yyyy' }}</span></div><h3>{{ doc.title }}</h3><div class="doc-course">{{ doc.course?.code }}{{ doc.course?.code && doc.course?.name ? ' · ' : '' }}{{ doc.course?.name || 'Chưa gắn môn học' }}</div><div class="doc-card-footer"><span>{{ doc.uploader?.fullName || 'Sinh viên DUT' }}</span><span class="doc-stats"><span><svg lucideDownload></svg>{{ doc.downloadCount ?? '—' }}</span><span><svg lucideStar></svg>{{ doc.averageRating != null ? (doc.averageRating | number:'1.1-1') : '—' }}</span></span></div></a> }</div> }
+        <div class="section-heading"><div><span class="eyebrow">ĐÁNH GIÁ TÍCH CỰC</span><h2>Tài liệu hữu ích</h2><p class="muted">Những tài liệu được cộng đồng đánh giá hữu ích.</p></div><a class="link-action" routerLink="/documents" [queryParams]="{ sort: 'helpful' }">Xem tất cả <svg lucideArrowRight></svg></a></div>
+        @if (topRated().length) { <div class="document-grid">@for (doc of topRated(); track doc.id) { <a class="document-card" [routerLink]="['/documents', doc.id]"><div class="doc-card-top"><span class="doc-type">{{ doc.category?.name || doc.categoryCode || 'Tài liệu' }}</span><span class="doc-date">{{ doc.createdAt | date:'dd/MM/yyyy' }}</span></div><h3>{{ doc.title }}</h3><div class="doc-course">{{ doc.course?.code }}{{ doc.course?.code && doc.course?.name ? ' · ' : '' }}{{ doc.course?.name || 'Chưa gắn môn học' }}</div><div class="doc-card-footer"><span>{{ doc.uploader?.fullName || 'Sinh viên DUT' }}</span><span class="doc-stats"><span><svg lucideDownload></svg>{{ doc.accessCount ?? '—' }}</span><span><svg lucideStar></svg>{{ helpfulPercent(doc) }}</span></span></div></a> }</div> }
         @else if (topRatedError()) { <div class="empty-state"><strong>Chưa thể tải tài liệu đánh giá cao</strong><p>{{ topRatedError() }}</p></div> }
         @else if (!loading()) { <div class="empty-state"><strong>Chưa có tài liệu được đánh giá</strong><p>Đánh giá của cộng đồng sẽ hiển thị tại đây.</p></div> }
       </section>
@@ -74,6 +75,7 @@ export class HomeComponent implements OnInit {
   get today(): string {
     return new Intl.DateTimeFormat('vi-VN', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
   }
+  helpfulPercent(doc: Document): string { return formatHelpfulPercent(doc); }
 
   ngOnInit(): void {
     this.load();
@@ -81,7 +83,7 @@ export class HomeComponent implements OnInit {
       next: (data) => this.popular.set(pageItems(data)),
       error: () => this.popularError.set('Vui lòng thử tải lại trang sau.'),
     });
-    this.documents.search({ sort: 'rating', page: 0, size: 3 }).subscribe({
+    this.documents.search({ sort: 'helpful', page: 0, size: 3 }).subscribe({
       next: (data) => this.topRated.set(pageItems(data)),
       error: () => this.topRatedError.set('Vui lòng thử tải lại trang sau.'),
     });

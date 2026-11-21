@@ -1,5 +1,4 @@
 import os
-import json
 from datetime import date
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
@@ -7,8 +6,8 @@ os.environ.setdefault("JWT_SECRET", "test-only-secret-that-is-long-enough-123456
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import create_engine, event, select
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
@@ -16,16 +15,17 @@ from app.core.security import hash_password
 from app.main import app
 from app.models.entities import (
     AcademicTerm, Course, CourseOffering, Document, DocumentCategory, Faculty, Lecturer,
-    Major, User, major_courses,
+    Major, Review, User, major_courses,
 )
+
+STUDENT_A = ("102230001", "student-password")   # người đăng tài liệu 1 và 2
+STUDENT_B = ("102230003", "student-b-password")  # người đánh giá (email: student.b@example.com)
+ADMIN = ("ADMIN001", "admin-password")
+DRIVE_URL = "https://drive.google.com/file/d/abc123/view"
 
 
 @pytest.fixture
-def client(tmp_path):
-    from app.storage.service import storage
-
-    original_storage_root = storage.root
-    storage.root = tmp_path
+def client():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     event.listen(engine, "connect", lambda conn, record: conn.execute("PRAGMA foreign_keys=ON"))
     Base.metadata.create_all(engine)
@@ -48,11 +48,14 @@ def client(tmp_path):
         lecturer = Lecturer(lecturer_code="L1", full_name="Lecturer Nguyen", faculty_id=faculty.id, status="ACTIVE")
         term = AcademicTerm(code="2026-1", name="Term 1", start_date=date(2026, 1, 1), end_date=date(2026, 6, 30), status="ACTIVE")
         category = DocumentCategory(code="EXAM", name="Exam")
-        user = User(student_id="102230001", full_name="Student A", password_hash=hash_password("student-password"),
+        user = User(student_id=STUDENT_A[0], full_name="Student A", password_hash=hash_password(STUDENT_A[1]),
                     role="STUDENT", status="ACTIVE", force_password_change=False)
-        admin = User(student_id="ADMIN001", full_name="Admin A", password_hash=hash_password("admin-password"),
+        student_b = User(student_id=STUDENT_B[0], full_name="Student B", email="student.b@example.com",
+                         password_hash=hash_password(STUDENT_B[1]),
+                         role="STUDENT", status="ACTIVE", force_password_change=False)
+        admin = User(student_id=ADMIN[0], full_name="Admin A", password_hash=hash_password(ADMIN[1]),
                      role="ADMIN", status="ACTIVE", force_password_change=False)
-        db.add_all([major, course, lecturer, term, category, user, admin])
+        db.add_all([major, course, lecturer, term, category, user, student_b, admin])
         db.flush()
         db.execute(major_courses.insert().values(major_id=major.id, course_id=course.id))
         offering = CourseOffering(course_id=course.id, lecturer_id=lecturer.id, term_id=term.id, class_code="CS101.01")
@@ -60,23 +63,29 @@ def client(tmp_path):
         db.flush()
         approved = Document(title="Data structures exam", description="Review notes", uploader_id=user.id,
                             major_id=major.id, course_id=course.id, course_offering_id=offering.id,
-                            category_id=category.id, status="APPROVED", original_file_name="exam.pdf",
-                            stored_file_name="missing.pdf", storage_key="missing.pdf", file_type="application/pdf", file_size=5)
+                            category_id=category.id, status="APPROVED", external_url=DRIVE_URL,
+                            storage_source="Google Drive", access_note="Dùng email sinh viên để xem")
         pending = Document(title="Pending hidden document", uploader_id=user.id, major_id=major.id,
                            course_id=course.id, category_id=category.id, status="PENDING",
-                           original_file_name="pending.pdf", stored_file_name="pending.pdf", storage_key="pending.pdf",
-                           file_type="application/pdf", file_size=5)
+                           external_url="https://1drv.ms/b/s!pending", storage_source="OneDrive")
         db.add_all([approved, pending])
         db.commit()
-        ids = {"faculty": faculty.id, "major": major.id, "course": course.id, "lecturer": lecturer.id, "term": term.id}
+        ids = {"faculty": faculty.id, "major": major.id, "course": course.id, "lecturer": lecturer.id,
+               "term": term.id, "session_factory": factory}
     with TestClient(app) as test_client:
         yield test_client, ids
     app.dependency_overrides.clear()
-    storage.root = original_storage_root
     Base.metadata.drop_all(engine)
     engine.dispose()
 
 
+def login_headers(api, credentials):
+    student_id, password = credentials
+    data = api.post("/api/v1/auth/login", json={"studentId": student_id, "password": password}).json()
+    return {"Authorization": f"Bearer {data['data']['accessToken']}"}
+
+
+# ---------------------------------------------------------------- Đăng nhập
 def test_login_refresh_rotation_and_admin_authorization(client):
     api, _ = client
     result = api.post("/api/v1/auth/login", json={"studentId": "102230001", "password": "student-password"})
@@ -90,6 +99,18 @@ def test_login_refresh_rotation_and_admin_authorization(client):
     assert api.get("/api/v1/admin/dashboard/stats", headers={"Authorization": f"Bearer {result.json()['data']['accessToken']}"}).status_code == 403
 
 
+def test_login_accepts_student_id_or_email(client):
+    api, _ = client
+    by_id = api.post("/api/v1/auth/login", json={"studentId": STUDENT_B[0], "password": STUDENT_B[1]})
+    by_email = api.post("/api/v1/auth/login", json={"studentId": "student.b@example.com", "password": STUDENT_B[1]})
+    assert by_id.status_code == 200
+    assert by_email.status_code == 200
+    assert by_email.json()["data"]["user"]["studentId"] == STUDENT_B[0]
+    wrong = api.post("/api/v1/auth/login", json={"studentId": "student.b@example.com", "password": "sai-mat-khau"})
+    assert wrong.status_code == 401
+
+
+# ---------------------------------------------------------------- Tìm kiếm
 def test_search_approved_documents_combines_filters_and_hides_pending(client):
     api, ids = client
     params = {
@@ -106,57 +127,178 @@ def test_search_approved_documents_combines_filters_and_hides_pending(client):
     assert api.get("/api/v1/documents", params={"q": "Pending hidden"}).json()["totalElements"] == 0
 
 
-def test_openapi_has_no_registration_endpoint(client):
+def test_openapi_exposes_link_endpoints_and_no_file_endpoints(client):
     api, _ = client
     paths = api.get("/openapi.json").json()["paths"]
     assert "/api/v1/auth/register" not in paths
-    assert "/api/v1/documents/{document_id}/download" in paths
+    assert "/api/v1/documents/{document_id}/access" in paths
+    assert "/api/v1/documents/{document_id}/download" not in paths
+    assert "/api/v1/documents/{document_id}/preview" not in paths
+    assert "/api/v1/admin/documents/{document_id}/preview" not in paths
 
 
-def test_upload_requires_major_course_relation_and_valid_pdf(client):
+# ---------------------------------------------------------------- Tài liệu = liên kết ngoài
+def test_create_document_with_external_link_and_validation(client):
     api, ids = client
-    login = api.post("/api/v1/auth/login", json={"studentId": "102230001", "password": "student-password"}).json()
-    headers = {"Authorization": f"Bearer {login['data']['accessToken']}"}
-    metadata = {
-        "title": "New exam", "description": "Uploaded", "majorId": ids["major"],
+    headers = login_headers(api, STUDENT_A)
+    body = {
+        "title": "New exam", "description": "Shared by link", "majorId": ids["major"],
         "courseId": ids["course"], "categoryCode": "EXAM",
+        "externalUrl": "https://1drv.ms/b/s!abc", "accessNote": "Cần đăng nhập email trường",
+        "isShareConfirmed": True,
     }
-    response = api.post("/api/v1/documents", headers=headers,
-                        data={"metadata": json.dumps(metadata)},
-                        files={"file": ("exam.pdf", b"%PDF-1.7\nbody", "application/pdf")})
+    created = api.post("/api/v1/documents", headers=headers, json=body)
+    assert created.status_code == 200
+    assert created.json()["data"]["status"] == "PENDING"
+    doc_id = created.json()["data"]["id"]
+
+    # Admin thấy link và nguồn lưu trữ do server tự nhận diện
+    detail = api.get(f"/api/v1/admin/documents/{doc_id}", headers=login_headers(api, ADMIN)).json()["data"]
+    assert detail["externalUrl"] == "https://1drv.ms/b/s!abc"
+    assert detail["storageSource"] == "OneDrive"
+    assert detail["accessNote"] == "Cần đăng nhập email trường"
+
+    # Dữ liệu không hợp lệ
+    assert api.post("/api/v1/documents", headers=headers, json=dict(body, majorId=99999)).status_code == 422
+    assert api.post("/api/v1/documents", headers=headers, json=dict(body, externalUrl="ftp://server/file")).status_code == 422
+    assert api.post("/api/v1/documents", headers=headers, json=dict(body, externalUrl="https://a.com/x y")).status_code == 422
+    assert api.post("/api/v1/documents", headers=headers, json=dict(body, externalUrl="https://u:p@a.com/x")).status_code == 422
+    assert api.post("/api/v1/documents", headers=headers, json=dict(body, description="x" * 501)).status_code == 422
+    assert api.post("/api/v1/documents", headers=headers, json=dict(body, isShareConfirmed=False)).status_code == 422
+    missing = {k: v for k, v in body.items() if k != "externalUrl"}
+    assert api.post("/api/v1/documents", headers=headers, json=missing).status_code == 422
+    # Description đúng 500 ký tự vẫn hợp lệ
+    assert api.post("/api/v1/documents", headers=headers, json=dict(body, description="x" * 500)).status_code == 200
+
+
+def test_public_detail_hides_link_and_access_endpoint_counts_visits(client):
+    api, _ = client
+    public = api.get("/api/v1/documents/1").json()["data"]
+    assert "externalUrl" not in public
+    assert public["storageSource"] == "Google Drive"
+    assert public["accessCount"] == 0
+
+    assert api.post("/api/v1/documents/1/access").status_code in (401, 403)   # cần đăng nhập
+    headers = login_headers(api, STUDENT_B)
+    first = api.post("/api/v1/documents/1/access", headers=headers)
+    assert first.status_code == 200
+    assert first.json()["data"]["externalUrl"] == DRIVE_URL
+    assert first.json()["data"]["accessCount"] == 1
+    assert api.post("/api/v1/documents/1/access", headers=headers).json()["data"]["accessCount"] == 2
+    assert api.get("/api/v1/documents/1").json()["data"]["accessCount"] == 2
+    # Tài liệu chưa duyệt không truy cập được
+    assert api.post("/api/v1/documents/2/access", headers=headers).status_code == 404
+
+
+def test_document_patch_is_json_and_resubmits_for_moderation(client):
+    api, _ = client
+    headers = login_headers(api, STUDENT_A)
+    response = api.patch("/api/v1/documents/1", headers=headers, json={"title": "Updated title"})
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "PENDING"
-    bad_metadata = dict(metadata, majorId=99999)
-    bad = api.post("/api/v1/documents", headers=headers,
-                   data={"metadata": json.dumps(bad_metadata)},
-                   files={"file": ("exam.pdf", b"%PDF-1.7\nbody", "application/pdf")})
-    assert bad.status_code == 422
-    invalid_file = api.post("/api/v1/documents", headers=headers,
-                            data={"metadata": json.dumps(metadata)},
-                            files={"file": ("exam.pdf", b"not a pdf", "application/pdf")})
-    assert invalid_file.status_code == 400
+    assert api.get("/api/v1/documents/1").status_code == 404   # chờ duyệt lại nên bị ẩn
 
-
-def test_review_create_update_and_duplicate(client):
-    api, _ = client
-    login = api.post("/api/v1/auth/login", json={"studentId": "102230001", "password": "student-password"}).json()
-    headers = {"Authorization": f"Bearer {login['data']['accessToken']}"}
-    created = api.post("/api/v1/documents/1/reviews", headers=headers, json={"rating": 5, "content": "Useful"})
-    assert created.status_code == 200
-    assert created.json()["data"]["averageRating"] == 5
-    assert api.post("/api/v1/documents/1/reviews", headers=headers, json={"rating": 4}).status_code == 409
-    review_id = api.get("/api/v1/documents/1/reviews").json()["data"][0]["id"]
-    updated = api.patch(f"/api/v1/reviews/{review_id}", headers=headers, json={"rating": 3})
+    updated = api.patch("/api/v1/documents/1", headers=headers, json={"externalUrl": "https://1drv.ms/x/new"})
     assert updated.status_code == 200
-    assert updated.json()["data"]["averageRating"] == 3
+    detail = api.get("/api/v1/admin/documents/1", headers=login_headers(api, ADMIN)).json()["data"]
+    assert detail["externalUrl"] == "https://1drv.ms/x/new"
+    assert detail["storageSource"] == "OneDrive"
+
+    assert api.patch("/api/v1/documents/1", headers=headers, json={"externalUrl": None}).status_code == 422
+    assert api.patch("/api/v1/documents/1", headers=headers, json={"isShareConfirmed": False}).status_code == 422
+    assert api.patch("/api/v1/documents/1", headers=headers, json={"description": "x" * 501}).status_code == 422
 
 
+# ---------------------------------------------------------------- Đánh giá Hữu ích / Không hữu ích
+def test_review_vote_create_update_duplicate_and_validation(client):
+    api, _ = client
+    voter = login_headers(api, STUDENT_B)
+    created = api.post("/api/v1/documents/1/reviews", headers=voter, json={"rating": 1, "content": "Useful"})
+    assert created.status_code == 200
+    data = created.json()["data"]
+    assert data["helpfulCount"] == 1 and data["notHelpfulCount"] == 0 and data["reviewCount"] == 1
+    assert data["helpfulRatio"] == 1.0
+    assert data["trust"]["code"] == "INSUFFICIENT"      # mới 1 lượt, chưa đủ 5
+
+    assert api.post("/api/v1/documents/1/reviews", headers=voter, json={"rating": 0}).status_code == 409
+    assert api.post("/api/v1/documents/1/reviews", headers=voter, json={"rating": 5}).status_code == 422
+    assert api.post("/api/v1/documents/1/reviews", headers=voter, json={"rating": -1}).status_code == 422
+
+    review_id = api.get("/api/v1/documents/1/reviews").json()["data"][0]["id"]
+    updated = api.patch(f"/api/v1/reviews/{review_id}", headers=voter, json={"rating": 0})
+    assert updated.status_code == 200
+    assert updated.json()["data"]["helpfulCount"] == 0
+    assert updated.json()["data"]["notHelpfulCount"] == 1
+    assert api.patch(f"/api/v1/reviews/{review_id}", headers=voter, json={"rating": 3}).status_code == 422
+    assert api.get("/api/v1/documents/1", headers=voter).json()["data"]["myRating"] == 0
+
+
+def test_uploader_cannot_review_own_document(client):
+    api, _ = client
+    response = api.post("/api/v1/documents/1/reviews", headers=login_headers(api, STUDENT_A), json={"rating": 1})
+    assert response.status_code == 403
+
+
+def test_trust_label_thresholds():
+    from app.documents.service import vote_stats
+
+    assert vote_stats(0, 0)["helpfulRatio"] is None
+    assert vote_stats(0, 0)["trust"]["code"] == "INSUFFICIENT"
+    assert vote_stats(4, 4)["trust"]["code"] == "INSUFFICIENT"   # dưới 5 lượt
+    assert vote_stats(4, 5)["trust"]["code"] == "HIGH"           # 80%
+    assert vote_stats(3, 5)["trust"]["code"] == "MEDIUM"         # 60%
+    assert vote_stats(5, 10)["trust"]["code"] == "MEDIUM"        # đúng 50%
+    assert vote_stats(2, 5)["trust"]["code"] == "LOW"            # 40%
+    assert vote_stats(2, 5)["notHelpfulCount"] == 3
+    assert vote_stats(1, 3)["helpfulRatio"] == 0.3333
+
+
+def test_helpful_sort_uses_smoothed_ratio_and_filter_by_percent(client):
+    api, ids = client
+    with ids["session_factory"]() as db:
+        uploader = db.scalar(select(User.id).where(User.student_id == STUDENT_A[0]))
+        voter_b = db.scalar(select(User.id).where(User.student_id == STUDENT_B[0]))
+        category = db.scalar(select(DocumentCategory.id))
+        second = Document(title="Second exam", uploader_id=uploader, major_id=ids["major"], course_id=ids["course"],
+                          category_id=category, status="APPROVED", external_url="https://onedrive.live.com/x",
+                          storage_source="OneDrive")
+        db.add(second)
+        db.flush()
+        extra = [User(student_id=f"U{i}", full_name=f"User {i}", password_hash="x", role="STUDENT",
+                      status="ACTIVE", force_password_change=False) for i in range(5)]
+        db.add_all(extra)
+        db.flush()
+        # Tài liệu 1: 1/1 hữu ích (100%, nhưng chỉ 1 lượt)
+        db.add(Review(document_id=1, user_id=voter_b, rating=1))
+        # Tài liệu "Second exam": 4/5 hữu ích (80%, đủ 5 lượt)
+        for i, user in enumerate(extra):
+            db.add(Review(document_id=second.id, user_id=user.id, rating=0 if i == 4 else 1))
+        db.commit()
+
+    result = api.get("/api/v1/documents", params={"sort": "helpful"}).json()
+    assert [d["title"] for d in result["data"]] == ["Second exam", "Data structures exam"]
+    assert result["data"][0]["helpfulCount"] == 4
+    assert result["data"][0]["helpfulRatio"] == 0.8
+    assert result["data"][0]["trust"]["code"] == "HIGH"
+    assert result["data"][1]["trust"]["code"] == "INSUFFICIENT"
+
+    only_perfect = api.get("/api/v1/documents", params={"minHelpfulPercent": 90}).json()
+    assert only_perfect["totalElements"] == 1
+    assert only_perfect["data"][0]["title"] == "Data structures exam"
+    assert api.get("/api/v1/documents", params={"minHelpfulPercent": 80}).json()["totalElements"] == 2
+    assert api.get("/api/v1/documents", params={"minHelpfulPercent": 101}).status_code == 422
+    # Tên sort cũ vẫn dùng được trong thời gian frontend chưa sửa
+    assert api.get("/api/v1/documents", params={"sort": "rating"}).status_code == 200
+    assert api.get("/api/v1/documents", params={"sort": "downloads"}).status_code == 200
+
+
+# ---------------------------------------------------------------- Admin, báo cáo, yêu thích
 def test_admin_student_provisioning_and_catalog_relationship_reads(client):
     api, ids = client
     login = api.post("/api/v1/auth/login", json={"studentId": "ADMIN001", "password": "admin-password"}).json()
     headers = {"Authorization": f"Bearer {login['data']['accessToken']}"}
     created = api.post("/api/v1/admin/users", headers=headers, json={
-        "studentId": "102230002", "fullName": "Student B", "email": "b@example.com", "majorId": ids["major"],
+        "studentId": "102230002", "fullName": "Student C", "email": "c@example.com", "majorId": ids["major"],
     })
     assert created.status_code == 200
     assert created.json()["data"]["user"]["forcePasswordChange"] is True
@@ -172,99 +314,28 @@ def test_admin_student_provisioning_and_catalog_relationship_reads(client):
     assert len(lecturers.json()["data"]) == 1
 
 
-def test_approved_document_download_is_streamed(client):
-    from app.storage.service import storage
-
-    api, _ = client
-    storage.locate("missing.pdf").write_bytes(b"%PDF-1.7\ncontent")
-    login = api.post("/api/v1/auth/login", json={"studentId": "102230001", "password": "student-password"}).json()
-    response = api.get("/api/v1/documents/1/download",
-                       headers={"Authorization": f"Bearer {login['data']['accessToken']}"})
-    assert response.status_code == 200
-    assert response.content.startswith(b"%PDF-")
-
-
-def test_preview_is_inline_and_rejects_non_public_documents(client):
-    from app.storage.service import storage
-
-    api, _ = client
-    storage.locate("missing.pdf").write_bytes(b"%PDF-1.7\ncontent")
-    response = api.get("/api/v1/documents/1/preview")
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "application/pdf"
-    assert response.headers["content-disposition"].startswith("inline;")
-    assert response.headers["x-content-type-options"] == "nosniff"
-    assert api.get("/api/v1/documents/2/preview").status_code == 404
-
-
-def test_admin_can_preview_pending_document_but_student_cannot(client):
-    from app.storage.service import storage
-
-    api, _ = client
-    storage.locate("pending.pdf").write_bytes(b"%PDF-1.7\npending")
-    student_token = api.post(
-        "/api/v1/auth/login",
-        json={"studentId": "102230001", "password": "student-password"},
-    ).json()["data"]["accessToken"]
-    path = "/api/v1/admin/documents/2/preview"
-    assert api.get(path, headers={"Authorization": f"Bearer {student_token}"}).status_code == 403
-    admin_token = api.post(
-        "/api/v1/auth/login",
-        json={"studentId": "ADMIN001", "password": "admin-password"},
-    ).json()["data"]["accessToken"]
-    response = api.get(path, headers={"Authorization": f"Bearer {admin_token}"})
-    assert response.status_code == 200
-    assert response.headers["content-disposition"].startswith("inline;")
-
-
 def test_report_submission_admin_resolution_and_duplicate_pending(client):
     api, _ = client
-    student_token = api.post(
-        "/api/v1/auth/login",
-        json={"studentId": "102230001", "password": "student-password"},
-    ).json()["data"]["accessToken"]
-    student_headers = {"Authorization": f"Bearer {student_token}"}
-    payload = {"reason": "BROKEN_FILE", "description": "File không mở được"}
+    student_headers = login_headers(api, STUDENT_A)
+    payload = {"reason": "BROKEN_LINK", "description": "Liên kết không mở được"}
     created = api.post("/api/v1/documents/1/reports", headers=student_headers, json=payload)
     assert created.status_code == 200
     report_id = created.json()["data"]["id"]
     assert api.post("/api/v1/documents/1/reports", headers=student_headers, json=payload).status_code == 409
+    assert api.post("/api/v1/documents/1/reports", headers=login_headers(api, STUDENT_B),
+                    json={"reason": "NO_ACCESS"}).status_code == 200
+    assert api.post("/api/v1/documents/1/reports", headers=student_headers,
+                    json={"reason": "BROKEN_FILE"}).status_code == 422   # lý do cũ không còn hợp lệ
 
-    admin_token = api.post(
-        "/api/v1/auth/login",
-        json={"studentId": "ADMIN001", "password": "admin-password"},
-    ).json()["data"]["accessToken"]
-    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    admin_headers = login_headers(api, ADMIN)
     report = api.get("/api/v1/admin/reports", headers=admin_headers)
     assert report.status_code == 200
-    assert report.json()["data"][0]["id"] == report_id
+    assert report_id in [r["id"] for r in report.json()["data"]]
     details = api.get(f"/api/v1/admin/reports/{report_id}", headers=admin_headers)
     assert details.json()["data"]["document"]["id"] == 1
-    updated = api.patch(
-        f"/api/v1/admin/reports/{report_id}",
-        headers=admin_headers,
-        json={"status": "RESOLVED"},
-    )
+    updated = api.patch(f"/api/v1/admin/reports/{report_id}", headers=admin_headers, json={"status": "RESOLVED"})
     assert updated.status_code == 200
     assert updated.json()["data"]["status"] == "RESOLVED"
-
-
-def test_document_patch_uses_metadata_multipart_and_resubmits_for_moderation(client):
-    import json
-
-    api, _ = client
-    token = api.post(
-        "/api/v1/auth/login",
-        json={"studentId": "102230001", "password": "student-password"},
-    ).json()["data"]["accessToken"]
-    response = api.patch(
-        "/api/v1/documents/1",
-        headers={"Authorization": f"Bearer {token}"},
-        data={"metadata": json.dumps({"title": "Updated title"})},
-    )
-    assert response.status_code == 200
-    assert response.json()["data"]["status"] == "PENDING"
-    assert api.get("/api/v1/documents/1").status_code == 404
 
 
 def test_favorite_state_is_returned_for_authenticated_search_and_detail(client):

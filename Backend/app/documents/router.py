@@ -1,11 +1,7 @@
-import json
-from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
-from fastapi.responses import FileResponse
-from pydantic import ValidationError
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.common.dependencies import DB, current_user, optional_user, require_admin
@@ -14,12 +10,14 @@ from app.core.exceptions import AppError
 from app.documents.schemas import DocumentCreate, DocumentPatch
 from app.documents.review_schemas import ModerationInput, ReviewCreate, ReviewPatch
 from app.documents.report_schemas import DocumentReportCreate
-from app.documents.service import get_document, may_edit, search_documents, soft_delete, validate_relations
-from app.models.entities import (
-    AcademicTerm, Course, CourseOffering, Document, DocumentCategory, DownloadLog, Favorite,
-    DocumentReport, Faculty, Lecturer, Major, ModerationLog, Review, User, major_courses,
+from app.documents.service import (
+    detect_storage_source, get_document, may_edit, search_documents, soft_delete,
+    validate_relations, vote_summary,
 )
-from app.storage.service import storage
+from app.models.entities import (
+    Course, Document, DocumentCategory, DownloadLog, Favorite,
+    DocumentReport, ModerationLog, Review, User,
+)
 
 router = APIRouter(tags=["Documents"])
 
@@ -31,12 +29,14 @@ def list_documents(
     major_id: int | None = Query(None, alias="majorId"), course_id: int | None = Query(None, alias="courseId"),
     lecturer_id: int | None = Query(None, alias="lecturerId"), term_id: int | None = Query(None, alias="termId"),
     category_code: str | None = Query(None, alias="categoryCode"),
-    sort: str = Query("recent", pattern="^(recent|popular|rating|downloads)$"),
+    min_helpful_percent: int | None = Query(None, ge=0, le=100, alias="minHelpfulPercent"),
+    # "rating" và "downloads" là tên cũ, giữ lại để frontend cũ chưa sửa vẫn chạy.
+    sort: str = Query("recent", pattern="^(recent|popular|helpful|accessed|rating|downloads)$"),
     page: int = Query(0, ge=0), size: int = Query(12, ge=1, le=100),
 ):
     items, total = search_documents(db, q=q, faculty_id=faculty_id, major_id=major_id, course_id=course_id,
                                     lecturer_id=lecturer_id, term_id=term_id, category_code=category_code,
-                                    sort=sort, page=page, size=size,
+                                    sort=sort, page=page, size=size, min_helpful_percent=min_helpful_percent,
                                     viewer_user_id=user.id if user else None)
     return page_result(items, page, size, total)
 
@@ -63,49 +63,33 @@ def document_detail(document_id: int, db: DB, user: Annotated[User | None, Depen
 
 
 @router.post("/documents")
-async def upload_document(
-    metadata: Annotated[str, Form()], file: Annotated[UploadFile, File()],
-    db: DB, user: Annotated[User, Depends(current_user)],
-):
-    try:
-        body = DocumentCreate.model_validate_json(metadata)
-    except ValidationError as exc:
-        raise AppError(422, "VALIDATION_ERROR", "Metadata không hợp lệ",
-                       {str(e["loc"][0]): e["msg"] for e in exc.errors() if e.get("loc")}) from exc
+def create_document(body: DocumentCreate, db: DB, user: Annotated[User, Depends(current_user)]):
     category_id = validate_relations(db, body.major_id, body.course_id, body.course_offering_id, body.category_code)
-    key, original, mime, size = await storage.save(file)
-    document = Document(title=body.title, description=body.description, uploader_id=user.id,
-                        major_id=body.major_id, course_id=body.course_id, course_offering_id=body.course_offering_id,
-                        category_id=category_id, original_file_name=original, stored_file_name=key,
-                        storage_key=key, file_type=mime, file_size=size, status="PENDING")
-    try:
-        db.add(document)
-        db.commit()
-        db.refresh(document)
-    except Exception:
-        db.rollback()
-        storage.remove(key)
-        raise
+    document = Document(
+        title=body.title, description=body.description, uploader_id=user.id,
+        major_id=body.major_id, course_id=body.course_id, course_offering_id=body.course_offering_id,
+        category_id=category_id, external_url=body.external_url,
+        storage_source=detect_storage_source(body.external_url), access_note=body.access_note,
+        is_share_confirmed=True, status="PENDING",
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
     return success({"id": document.id, "status": document.status})
 
 
 @router.patch("/documents/{document_id}")
-async def patch_document(
-    document_id: int, db: DB, user: Annotated[User, Depends(current_user)],
-    metadata: Annotated[str, Form()], file: Annotated[UploadFile | None, File()] = None,
-):
-    try:
-        body = DocumentPatch.model_validate_json(metadata)
-    except ValidationError as exc:
-        raise AppError(422, "VALIDATION_ERROR", "Metadata không hợp lệ",
-                       {str(e["loc"][0]): e["msg"] for e in exc.errors() if e.get("loc")}) from exc
+def patch_document(document_id: int, body: DocumentPatch, db: DB, user: Annotated[User, Depends(current_user)]):
     document = db.get(Document, document_id)
     if document is None or document.deleted_at is not None:
         raise AppError(404, "DOCUMENT_NOT_FOUND", "Không tìm thấy tài liệu")
     may_edit(document, user)
     values = body.model_dump(exclude_unset=True, by_alias=False)
-    if "title" in values and values["title"] is None:
-        raise AppError(422, "VALIDATION_ERROR", "Dữ liệu không hợp lệ", {"title": "Tiêu đề không được để trống"})
+    required = {"title": "Tiêu đề không được để trống", "external_url": "Liên kết không được để trống",
+                "is_share_confirmed": "Cần xác nhận quyền chia sẻ"}
+    for field, message in required.items():
+        if field in values and values[field] is None:
+            raise AppError(422, "VALIDATION_ERROR", "Dữ liệu không hợp lệ", {field: message})
     major_id = values.get("major_id", document.major_id)
     course_id = values.get("course_id", document.course_id)
     offering_id = values.get("course_offering_id", document.course_offering_id)
@@ -114,24 +98,13 @@ async def patch_document(
         if category_code is None:
             category_code = db.get(DocumentCategory, document.category_id).code
         values["category_id"] = validate_relations(db, major_id, course_id, offering_id, category_code)
-    old_key = document.storage_key
-    new_key = None
-    if file is not None:
-        new_key, original, mime, size = await storage.save(file)
-        values.update(original_file_name=original, stored_file_name=new_key, storage_key=new_key, file_type=mime, file_size=size)
+    if "external_url" in values:
+        values["storage_source"] = detect_storage_source(values["external_url"])
     for key, value in values.items():
         setattr(document, key, value)
     document.status = "PENDING"
     document.rejection_reason = None
-    try:
-        db.commit()
-    except Exception:
-        db.rollback()
-        if new_key:
-            storage.remove(new_key)
-        raise
-    if new_key:
-        storage.remove(old_key)
+    db.commit()
     return success({"id": document.id, "status": document.status})
 
 
@@ -156,39 +129,22 @@ def record_view(document_id: int, db: DB, user: Annotated[User, Depends(current_
     return success({"viewCount": document.view_count})
 
 
-@router.get("/documents/{document_id}/download")
-def download_document(document_id: int, db: DB, user: Annotated[User, Depends(current_user)]):
-    document = db.scalar(select(Document).where(Document.id == document_id, Document.status == "APPROVED", Document.deleted_at.is_(None)))
-    if document is None:
-        raise AppError(404, "DOCUMENT_NOT_FOUND", "Không tìm thấy tài liệu")
-    path = storage.locate(document.storage_key)
-    if not path.is_file():
-        raise AppError(404, "FILE_NOT_FOUND", "Không tìm thấy file tài liệu")
-    document.download_count += 1
-    db.add(DownloadLog(user_id=user.id, document_id=document.id))
-    db.commit()
-    return FileResponse(path, filename=document.original_file_name, media_type=document.file_type)
-
-
-@router.get("/documents/{document_id}/preview")
-def preview_document(document_id: int, db: DB):
+@router.post("/documents/{document_id}/access")
+def access_document(document_id: int, db: DB, user: Annotated[User, Depends(current_user)]):
+    """Ghi nhận lượt truy cập liên kết và trả về link ngoài để frontend mở."""
     document = db.scalar(select(Document).where(
         Document.id == document_id, Document.status == "APPROVED", Document.deleted_at.is_(None)
     ))
     if document is None:
         raise AppError(404, "DOCUMENT_NOT_FOUND", "Không tìm thấy tài liệu")
-    if document.file_type != "application/pdf" and not document.file_type.startswith("image/"):
-        raise AppError(415, "PREVIEW_NOT_SUPPORTED", "Định dạng tài liệu không hỗ trợ xem trước")
-    path = storage.locate(document.storage_key)
-    if not path.is_file():
-        raise AppError(404, "FILE_NOT_FOUND", "Không tìm thấy file tài liệu")
-    return FileResponse(
-        path,
-        filename=document.original_file_name,
-        media_type=document.file_type,
-        content_disposition_type="inline",
-        headers={"X-Content-Type-Options": "nosniff"},
-    )
+    if not document.external_url:
+        raise AppError(404, "LINK_NOT_FOUND", "Tài liệu này chưa có liên kết")
+    db.execute(update(Document).where(Document.id == document_id).values(download_count=Document.download_count + 1))
+    db.add(DownloadLog(user_id=user.id, document_id=document.id))
+    db.commit()
+    db.refresh(document)
+    return success({"externalUrl": document.external_url, "storageSource": document.storage_source,
+                    "accessNote": document.access_note, "accessCount": document.download_count})
 
 
 @router.post("/documents/{document_id}/reports")
@@ -244,20 +200,20 @@ def list_reviews(document_id: int, db: DB, page: int = Query(0, ge=0), size: int
 
 @router.post("/documents/{document_id}/reviews")
 def create_review(document_id: int, payload: ReviewCreate, db: DB, user: Annotated[User, Depends(current_user)]):
-    rating_value = payload.rating
     doc = db.scalar(select(Document).where(Document.id == document_id, Document.status == "APPROVED", Document.deleted_at.is_(None)))
     if doc is None: raise AppError(404, "DOCUMENT_NOT_FOUND", "Không tìm thấy tài liệu đã duyệt")
+    if doc.uploader_id == user.id:
+        raise AppError(403, "SELF_REVIEW_FORBIDDEN", "Bạn không thể đánh giá tài liệu do chính mình chia sẻ")
     existing = db.scalar(select(Review.id).where(Review.document_id == document_id, Review.user_id == user.id))
     if existing: raise AppError(409, "REVIEW_EXISTS", "Bạn đã đánh giá tài liệu này")
-    review = Review(document_id=document_id, user_id=user.id, rating=rating_value, content=payload.content)
+    review = Review(document_id=document_id, user_id=user.id, rating=payload.rating, content=payload.content)
     db.add(review)
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise AppError(409, "REVIEW_EXISTS", "Bạn đã đánh giá tài liệu này") from exc
-    avg, count = db.execute(select(func.avg(Review.rating), func.count(Review.id)).where(Review.document_id == document_id)).one()
-    return success({"id": review.id, "averageRating": float(avg or 0), "reviewCount": count})
+    return success({"id": review.id, **vote_summary(db, document_id)})
 
 
 @router.patch("/reviews/{review_id}")
@@ -269,8 +225,7 @@ def update_review(review_id: int, payload: ReviewPatch, db: DB, user: Annotated[
     if "rating" in values and values["rating"] is not None: review.rating = values["rating"]
     if "content" in values: review.content = values["content"]
     db.commit()
-    avg, count = db.execute(select(func.avg(Review.rating), func.count(Review.id)).where(Review.document_id == review.document_id)).one()
-    return success({"id": review.id, "averageRating": float(avg or 0), "reviewCount": count})
+    return success({"id": review.id, **vote_summary(db, review.document_id)})
 
 
 @router.delete("/reviews/{review_id}")
@@ -342,25 +297,6 @@ def admin_documents(db: DB, user: Annotated[User, Depends(require_admin)], statu
 @router.get("/admin/documents/{document_id}")
 def admin_document_detail(document_id: int, db: DB, user: Annotated[User, Depends(require_admin)]):
     return success(get_document(db, document_id, public=False))
-
-
-@router.get("/admin/documents/{document_id}/preview")
-def admin_document_preview(document_id: int, db: DB, user: Annotated[User, Depends(require_admin)]):
-    document = db.scalar(select(Document).where(Document.id == document_id, Document.deleted_at.is_(None)))
-    if document is None:
-        raise AppError(404, "DOCUMENT_NOT_FOUND", "Không tìm thấy tài liệu")
-    if document.file_type != "application/pdf" and not document.file_type.startswith("image/"):
-        raise AppError(415, "PREVIEW_NOT_SUPPORTED", "Định dạng tài liệu không hỗ trợ xem trước")
-    path = storage.locate(document.storage_key)
-    if not path.is_file():
-        raise AppError(404, "FILE_NOT_FOUND", "Không tìm thấy file tài liệu")
-    return FileResponse(
-        path,
-        filename=document.original_file_name,
-        media_type=document.file_type,
-        content_disposition_type="inline",
-        headers={"X-Content-Type-Options": "nosniff"},
-    )
 
 
 @router.patch("/admin/documents/{document_id}/moderation")

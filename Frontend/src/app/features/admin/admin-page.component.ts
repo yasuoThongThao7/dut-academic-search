@@ -3,7 +3,6 @@ import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
-import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { LucideArrowRight, LucideBookOpen, LucideCheck, LucideCircleAlert, LucideDownload, LucideFileText, LucidePlus, LucideRefreshCw, LucideSearch, LucideShieldCheck, LucideTrash2, LucideUsers, LucideX } from '@lucide/angular';
 import { combineLatest, forkJoin } from 'rxjs';
 import { ApiService, pageItems } from '../../core/services/api.service';
@@ -67,7 +66,7 @@ type CatalogResource = 'faculties' | 'majors' | 'courses' | 'lecturers' | 'acade
 
       @if (showUserForm()) { <div class="modal-backdrop" (click)="closeModals()"><section class="modal-card" (click)="$event.stopPropagation()"><div class="modal-heading"><div><span class="eyebrow">CẤP TÀI KHOẢN</span><h2>Tạo tài khoản sinh viên</h2></div><button class="icon-button" (click)="closeModals()" aria-label="Đóng"><svg lucideX></svg></button></div><form (ngSubmit)="createUser()"><div class="form-fields"><label class="field-label">MSSV <span class="required">*</span><input class="form-input" name="studentId" [(ngModel)]="userDraft.studentId" required /></label><label class="field-label">Họ tên <span class="required">*</span><input class="form-input" name="fullName" [(ngModel)]="userDraft.fullName" required /></label><label class="field-label">Email<input class="form-input" type="email" name="email" [(ngModel)]="userDraft.email" /></label><label class="field-label">Khoa<select class="form-input" name="facultyId" [(ngModel)]="userDraft.facultyId" (ngModelChange)="loadUserMajors($event)"><option [ngValue]="null">Chọn khoa</option>@for (faculty of faculties(); track faculty.id) { <option [ngValue]="faculty.id">{{ faculty.name }}</option> }</select></label><label class="field-label">Chuyên ngành<select class="form-input" name="majorId" [(ngModel)]="userDraft.majorId" [disabled]="!userDraft.facultyId"><option [ngValue]="null">Chọn chuyên ngành</option>@for (major of userMajors(); track major.id) { <option [ngValue]="major.id">{{ major.name }}</option> }</select></label></div>@if (modalError()) { <div class="field-error">{{ modalError() }}</div> }<div class="modal-actions"><button class="btn btn-outline" type="button" (click)="closeModals()">Hủy</button><button class="btn btn-primary" type="submit" [disabled]="saving()">{{ saving() ? 'Đang cấp tài khoản…' : 'Tạo tài khoản' }}</button></div></form></section></div> }
 
-      @if (selectedDocument()) { <div class="modal-backdrop" (click)="closeModeration()"><section class="modal-card moderation-modal" (click)="$event.stopPropagation()"><div class="modal-heading"><div><span class="eyebrow">CHI TIẾT KIỂM DUYỆT</span><h2>{{ selectedDocument()?.title }}</h2></div><button class="icon-button" (click)="closeModeration()" aria-label="Đóng"><svg lucideX></svg></button></div><div class="moderation-details"><p>{{ selectedDocument()?.description || 'Không có mô tả.' }}</p><div><small>NGƯỜI ĐĂNG</small><strong>{{ selectedDocument()?.uploader?.fullName || '—' }}</strong></div><div><small>MÔN HỌC</small><strong>{{ selectedDocument()?.course?.name || '—' }}</strong></div><div><small>KHOA / CHUYÊN NGÀNH</small><strong>{{ selectedDocument()?.major?.faculty?.name || '—' }} · {{ selectedDocument()?.major?.name || '—' }}</strong></div><button class="btn btn-outline" (click)="previewModerationDocument()">Xem trước tệp</button>@if (adminPreviewError()) { <p class="field-error">{{ adminPreviewError() }}</p> }@if (adminPreviewImage()) { <img class="document-image-preview" [src]="adminPreviewImage()" [alt]="selectedDocument()?.fileName || selectedDocument()?.title" /> }@if (adminPreviewPdf()) { <iframe class="document-pdf-preview" [src]="adminPreviewPdf()" title="Xem trước tài liệu kiểm duyệt"></iframe> }</div>@if (selectedDocument()?.status === 'PENDING') { <div class="modal-actions"><button class="btn btn-outline danger-button" (click)="moderate('REJECTED')">Từ chối</button><button class="btn btn-primary" (click)="moderate('APPROVED')"><svg lucideCheck></svg> Duyệt tài liệu</button></div> }@else { <div class="modal-actions"><button class="btn btn-outline" (click)="moderate(selectedDocument()?.status === 'HIDDEN' ? 'APPROVED' : 'HIDDEN')">{{ selectedDocument()?.status === 'HIDDEN' ? 'Hiện lại' : 'Ẩn tài liệu' }}</button></div> }</section></div> }
+      @if (selectedDocument()) { <div class="modal-backdrop" (click)="closeModeration()"><section class="modal-card moderation-modal" (click)="$event.stopPropagation()"><div class="modal-heading"><div><span class="eyebrow">CHI TIẾT KIỂM DUYỆT</span><h2>{{ selectedDocument()?.title }}</h2></div><button class="icon-button" (click)="closeModeration()" aria-label="Đóng"><svg lucideX></svg></button></div><div class="moderation-details"><p>{{ selectedDocument()?.description || 'Không có mô tả.' }}</p><div><small>NGƯỜI ĐĂNG</small><strong>{{ selectedDocument()?.uploader?.fullName || '—' }}</strong></div><div><small>MÔN HỌC</small><strong>{{ selectedDocument()?.course?.name || '—' }}</strong></div><div><small>KHOA / CHUYÊN NGÀNH</small><strong>{{ selectedDocument()?.major?.faculty?.name || '—' }} · {{ selectedDocument()?.major?.name || '—' }}</strong></div>@if (selectedDocument()?.accessNote) { <p><strong>Lưu ý truy cập:</strong> {{ selectedDocument()?.accessNote }}</p> }@if (selectedDocument()?.externalUrl; as externalUrl) { <a class="btn btn-outline" [href]="externalUrl" target="_blank" rel="noopener noreferrer">Mở liên kết tài liệu</a> }</div>@if (selectedDocument()?.status === 'PENDING') { <div class="modal-actions"><button class="btn btn-outline danger-button" (click)="moderate('REJECTED')">Từ chối</button><button class="btn btn-primary" (click)="moderate('APPROVED')"><svg lucideCheck></svg> Duyệt tài liệu</button></div> }@else { <div class="modal-actions"><button class="btn btn-outline" (click)="moderate(selectedDocument()?.status === 'HIDDEN' ? 'APPROVED' : 'HIDDEN')">{{ selectedDocument()?.status === 'HIDDEN' ? 'Hiện lại' : 'Ẩn tài liệu' }}</button></div> }</section></div> }
 
       @if (showCatalogForm()) { <div class="modal-backdrop" (click)="showCatalogForm.set(false)"><section class="modal-card" (click)="$event.stopPropagation()"><div class="modal-heading"><div><span class="eyebrow">{{ catalogEditing() ? 'CẬP NHẬT' : 'THÊM MỚI' }}</span><h2>{{ catalogEditing() ? 'Chỉnh sửa' : 'Thêm' }} {{ catalogTitle.toLowerCase() }}</h2></div><button class="icon-button" (click)="showCatalogForm.set(false)" aria-label="Đóng"><svg lucideX></svg></button></div><form (ngSubmit)="saveCatalog()"><div class="form-fields">@for (field of catalogFields; track field.key) { <label class="field-label">{{ field.label }}<input class="form-input" [type]="field.type || 'text'" [name]="field.key" [(ngModel)]="catalogDraft[field.key]" [required]="field.required" /></label> }</div>@if (modalError()) { <div class="field-error">{{ modalError() }}</div> }<div class="modal-actions"><button class="btn btn-outline" type="button" (click)="showCatalogForm.set(false)">Hủy</button><button class="btn btn-primary" type="submit" [disabled]="saving()">{{ saving() ? 'Đang lưu…' : 'Lưu thay đổi' }}</button></div></form></section></div> }
       @if (selectedReport()) { <div class="modal-backdrop" (click)="selectedReport.set(null)"><section class="modal-card" (click)="$event.stopPropagation()"><div class="modal-heading"><div><span class="eyebrow">CHI TIẾT BÁO CÁO #{{ selectedReport()?.id }}</span><h2>{{ selectedReport()?.documentTitle }}</h2></div><button class="icon-button" aria-label="Đóng" (click)="selectedReport.set(null)"><svg lucideX></svg></button></div><div class="moderation-details"><div><small>NGƯỜI BÁO CÁO</small><strong>{{ selectedReport()?.reporter?.fullName }} · {{ selectedReport()?.reporter?.studentId }}</strong></div><div><small>LÝ DO</small><strong>{{ reportReasonLabel(selectedReport()?.reason) }}</strong></div><p>{{ selectedReport()?.description || 'Không có mô tả bổ sung.' }}</p>@if (selectedReport()?.document; as reportedDocument) { <div><small>TRẠNG THÁI TÀI LIỆU</small><strong>{{ reportedDocument.status }}</strong></div><p>{{ reportedDocument.description || 'Không có mô tả tài liệu.' }}</p> }</div>@if (selectedReport()?.status === 'PENDING') { <label class="field-label"><input type="checkbox" [checked]="hideReportedDocument()" (change)="hideReportedDocument.set($any($event.target).checked)" /> Ẩn tài liệu khi xử lý báo cáo</label><div class="modal-actions"><button class="btn btn-outline" (click)="processReport('REJECTED')">Từ chối báo cáo</button><button class="btn btn-primary" (click)="processReport('RESOLVED')">Đánh dấu đã xử lý</button></div> }</section></div> }
@@ -79,7 +78,6 @@ export class AdminPageComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly api = inject(ApiService);
   private readonly destroyRef = inject(DestroyRef);
-  private readonly sanitizer = inject(DomSanitizer);
   readonly view = signal<AdminView>('dashboard');
   readonly loading = signal(true);
   readonly saving = signal(false);
@@ -100,9 +98,6 @@ export class AdminPageComponent implements OnInit {
   readonly moderationPage = signal(0);
   readonly moderationPages = signal(1);
   readonly selectedDocument = signal<Document | null>(null);
-  readonly adminPreviewPdf = signal<SafeResourceUrl | null>(null);
-  readonly adminPreviewImage = signal<string | null>(null);
-  readonly adminPreviewError = signal('');
   readonly showUserForm = signal(false);
   readonly showCatalogForm = signal(false);
   readonly createdCredential = signal('');
@@ -132,7 +127,6 @@ export class AdminPageComponent implements OnInit {
   userQuery = '';
   resource: CatalogResource = 'faculties';
   private localQuery = '';
-  private moderationPreviewObjectUrl: string | null = null;
   readonly moderationStatuses = [
     { label: 'Chờ duyệt', value: 'PENDING' as DocumentStatus },
     { label: 'Đã duyệt', value: 'APPROVED' as DocumentStatus },
@@ -141,7 +135,6 @@ export class AdminPageComponent implements OnInit {
   ];
 
   ngOnInit(): void {
-    this.destroyRef.onDestroy(() => this.clearModerationPreview());
     combineLatest([this.route.data, this.route.paramMap]).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(([data, params]) => {
       this.view.set(data['view'] as AdminView);
       this.error.set('');
@@ -307,7 +300,8 @@ export class AdminPageComponent implements OnInit {
       WRONG_COURSE: 'Sai môn học',
       WRONG_MAJOR: 'Sai chuyên ngành',
       INAPPROPRIATE: 'Nội dung không phù hợp',
-      BROKEN_FILE: 'File lỗi hoặc không mở được',
+      BROKEN_LINK: 'Liên kết bị lỗi',
+      NO_ACCESS: 'Không có quyền truy cập',
       COPYRIGHT: 'Vi phạm bản quyền',
       OTHER: 'Lý do khác',
     };
@@ -377,7 +371,6 @@ export class AdminPageComponent implements OnInit {
     });
   }
   openModeration(doc: Document): void {
-    this.clearModerationPreview();
     this.selectedDocument.set(doc);
     if (this.view() === 'moderation' || this.view() === 'dashboard') {
       this.api.get<Document>(`/admin/documents/${doc.id}`).subscribe({
@@ -386,36 +379,8 @@ export class AdminPageComponent implements OnInit {
       });
     }
   }
-  previewModerationDocument(): void {
-    const doc = this.selectedDocument();
-    if (!doc) return;
-    this.adminPreviewError.set('');
-    this.api.download(`/admin/documents/${doc.id}/preview`).subscribe({
-      next: (blob) => {
-        this.clearModerationPreview();
-        this.moderationPreviewObjectUrl = URL.createObjectURL(blob);
-        if (doc.fileType === 'application/pdf') {
-          this.adminPreviewPdf.set(this.sanitizer.bypassSecurityTrustResourceUrl(this.moderationPreviewObjectUrl));
-        } else if (doc.fileType?.startsWith('image/')) {
-          this.adminPreviewImage.set(this.moderationPreviewObjectUrl);
-        } else {
-          this.adminPreviewError.set('Định dạng tài liệu không hỗ trợ xem trước.');
-        }
-      },
-      error: (error: { error?: { message?: string } }) => {
-        this.adminPreviewError.set(error.error?.message || 'Không thể tải bản xem trước.');
-      },
-    });
-  }
   closeModeration(): void {
     this.selectedDocument.set(null);
-    this.clearModerationPreview();
-  }
-  private clearModerationPreview(): void {
-    if (this.moderationPreviewObjectUrl) URL.revokeObjectURL(this.moderationPreviewObjectUrl);
-    this.moderationPreviewObjectUrl = null;
-    this.adminPreviewPdf.set(null);
-    this.adminPreviewImage.set(null);
   }
   moderate(status: DocumentStatus): void {
     const doc = this.selectedDocument();

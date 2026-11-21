@@ -1,18 +1,18 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
-import { Component, DestroyRef, OnDestroy, OnInit, inject, signal } from '@angular/core';
+import { DatePipe } from '@angular/common';
+import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
-import { LucideArrowLeft, LucideBookmark, LucideDownload, LucideEye, LucideFileText, LucideHeart, LucideStar } from '@lucide/angular';
-import { Document, Review } from '../../core/models/api.models';
+import { LucideArrowLeft, LucideBookmark, LucideEye, LucideExternalLink, LucideHeart } from '@lucide/angular';
+import { Document, ReportReason, Review } from '../../core/models/api.models';
 import { pageItems } from '../../core/services/api.service';
 import { AuthService } from '../../core/services/auth.service';
 import { DocumentService } from '../../core/services/document.service';
+import { helpfulPercent, trustClass, trustLabel } from '../../core/utils/document-ui.utils';
 
 @Component({
   selector: 'app-document-detail',
-  imports: [DatePipe, DecimalPipe, ReactiveFormsModule, RouterLink, LucideArrowLeft, LucideBookmark, LucideDownload, LucideEye, LucideFileText, LucideHeart, LucideStar],
+  imports: [DatePipe, ReactiveFormsModule, RouterLink, LucideArrowLeft, LucideBookmark, LucideEye, LucideExternalLink, LucideHeart],
   template: `
     <div class="detail-page">
       <a class="back-link" routerLink="/documents"><svg lucideArrowLeft></svg> Quay lại kết quả tìm kiếm</a>
@@ -21,40 +21,36 @@ import { DocumentService } from '../../core/services/document.service';
       @else if (document(); as doc) {
         <div class="detail-layout">
           <main>
-            <section class="detail-hero"><div class="detail-tags"><span class="doc-type">{{ doc.category?.name || doc.categoryCode || 'Tài liệu' }}</span><span class="status-badge status-approved">Đã duyệt</span></div><h1>{{ doc.title }}</h1>@if (doc.description) { <p>{{ doc.description }}</p> }<div class="detail-author"><span class="avatar">{{ uploaderInitials(doc) }}</span><span><strong>{{ doc.uploader?.fullName || 'Sinh viên DUT' }}</strong><small>Đăng ngày {{ doc.createdAt | date:'dd/MM/yyyy' }}</small></span></div><div class="detail-actions"><button class="btn btn-primary" (click)="download()"><svg lucideDownload></svg> Tải tài liệu</button><button class="btn btn-outline" (click)="toggleFavorite()"><svg lucideHeart></svg>{{ doc.isFavorite ? 'Đã yêu thích' : 'Thêm yêu thích' }}</button><button class="btn btn-outline" (click)="reportOpen.set(true)">Báo cáo</button></div>@if (reportMessage()) { <div class="alert" [class.alert-success]="reportSubmitted()" [class.alert-error]="!reportSubmitted()">{{ reportMessage() }}</div> }</section>
+            <section class="detail-hero"><div class="detail-tags"><span class="doc-type">{{ doc.category?.name || doc.categoryCode || 'Tài liệu' }}</span><span class="status-badge status-approved">Đã duyệt</span><span [class]="trustClass(doc)">{{ trustLabel(doc) }}</span></div><h1>{{ doc.title }}</h1>@if (doc.description) { <p>{{ doc.description }}</p> }<div class="detail-author"><span class="avatar">{{ uploaderInitials(doc) }}</span><span><strong>{{ doc.uploader?.fullName || 'Sinh viên DUT' }}</strong><small>Đăng ngày {{ doc.createdAt | date:'dd/MM/yyyy' }}</small></span></div><div class="detail-actions"><button class="btn btn-primary" (click)="openLink()"><svg lucideExternalLink></svg> Mở liên kết</button><button class="btn btn-outline" (click)="toggleFavorite()"><svg lucideHeart></svg>{{ doc.isFavorite ? 'Đã yêu thích' : 'Thêm yêu thích' }}</button><button class="btn btn-outline" (click)="reportOpen.set(true)">Báo cáo</button></div>@if (linkMessage()) { <div class="alert alert-error">{{ linkMessage() }}</div> }@if (reportMessage()) { <div class="alert" [class.alert-success]="reportSubmitted()" [class.alert-error]="!reportSubmitted()">{{ reportMessage() }}</div> }</section>
             <section class="detail-section"><div class="section-heading detail-section-heading"><div><span class="eyebrow">THÔNG TIN ĐÀO TẠO</span><h2>Thông tin học thuật</h2></div><svg lucideBookmark></svg></div><div class="academic-grid">
               <div><small>KHOA</small><strong>{{ doc.major?.faculty?.name || 'Chưa có dữ liệu' }}</strong></div><div><small>CHUYÊN NGÀNH</small><strong>{{ doc.major?.name || 'Chưa có dữ liệu' }}</strong></div><div><small>MÃ MÔN HỌC</small><strong>{{ doc.course?.code || 'Chưa có dữ liệu' }}</strong></div><div><small>TÊN MÔN HỌC</small><strong>{{ doc.course?.name || 'Chưa có dữ liệu' }}</strong></div>
               @if (doc.courseOffering?.lecturer?.fullName) { <div><small>GIẢNG VIÊN</small><strong>{{ doc.courseOffering?.lecturer?.fullName }}</strong></div> }
               @if (doc.courseOffering?.academicTerm?.name) { <div><small>HỌC KỲ</small><strong>{{ doc.courseOffering?.academicTerm?.name }}</strong></div> }
               @if (doc.courseOffering?.classCode) { <div><small>LỚP HỌC PHẦN</small><strong>{{ doc.courseOffering?.classCode }}</strong></div> }
             </div></section>
-            <section class="detail-section file-section"><div><span class="eyebrow">TỆP TÀI LIỆU</span><h2>Xem trước</h2></div>
-              @if (previewLoading()) { <div class="preview-placeholder">Đang tải bản xem trước…</div> }
-              @else if (previewError()) { <div class="preview-placeholder"><span class="preview-icon"><svg lucideFileText></svg></span><strong>{{ doc.fileName || 'Tệp đính kèm' }}</strong><p>{{ previewError() }}</p><button class="btn btn-outline" (click)="download()"><svg lucideDownload></svg> Tải tệp xuống</button></div> }
-              @else if (previewImageUrl()) { <img class="document-image-preview" [src]="previewImageUrl()" [alt]="doc.fileName || doc.title" /> }
-              @else if (previewPdfUrl()) { <iframe class="document-pdf-preview" [src]="previewPdfUrl()" [title]="'Xem trước ' + doc.fileName"></iframe> }
-              @else { <div class="preview-placeholder"><strong>{{ doc.fileName || 'Tệp đính kèm' }}</strong><p>Định dạng này không hỗ trợ xem trước trên trình duyệt.</p><button class="btn btn-outline" (click)="download()"><svg lucideDownload></svg> Tải tệp xuống</button></div> }
+            <section class="detail-section file-section"><div><span class="eyebrow">LIÊN KẾT TÀI LIỆU</span><h2>{{ doc.storageSource || 'Nguồn tài liệu' }}</h2></div>
+              @if (doc.accessNote) { <p>{{ doc.accessNote }}</p> }
+              <button class="btn btn-primary" (click)="openLink()"><svg lucideExternalLink></svg> Mở liên kết tài liệu</button>
             </section>
-            <section class="detail-section review-section"><div class="section-heading detail-section-heading"><div><span class="eyebrow">CỘNG ĐỒNG ĐÁNH GIÁ</span><h2>Nhận xét và đánh giá</h2></div><div class="rating-summary"><svg lucideStar></svg><strong>{{ doc.averageRating != null ? (doc.averageRating | number:'1.1-1') : '—' }}</strong><small>{{ doc.reviewCount ?? 0 }} đánh giá</small></div></div>
+            <section class="detail-section review-section"><div class="section-heading detail-section-heading"><div><span class="eyebrow">CỘNG ĐỒNG PHẢN HỒI</span><h2>Đánh giá mức độ hữu ích</h2></div><div class="rating-summary"><strong>{{ helpfulPercent(doc) }}</strong><small>{{ doc.helpfulCount ?? 0 }} hữu ích · {{ doc.notHelpfulCount ?? 0 }} không hữu ích</small></div></div>
               @if (reviewMessage()) { <div class="alert" [class.alert-success]="reviewSaved()" [class.alert-error]="!reviewSaved()">{{ reviewMessage() }}</div> }
-              <form class="review-form" [formGroup]="reviewForm" (ngSubmit)="submitReview()"><label class="field-label">Đánh giá của bạn</label><div class="star-picker">@for (star of [1,2,3,4,5]; track star) { <button type="button" [class.star-selected]="star <= reviewForm.controls.rating.value" (click)="reviewForm.controls.rating.setValue(star)" [attr.aria-label]="star + ' sao'"><svg lucideStar></svg></button> }</div><textarea class="form-input textarea" formControlName="content" rows="3" placeholder="Chia sẻ trải nghiệm của bạn về tài liệu này..."></textarea><div class="review-submit"><span class="muted small-note">Đánh giá cần từ 1 đến 5 sao.</span><button class="btn btn-primary" type="submit" [disabled]="reviewLoading()">Gửi đánh giá</button></div></form>
-              @if (reviewsLoading()) { <div class="review-placeholder">Đang tải nhận xét…</div> } @else if (reviews().length) { @for (review of reviews(); track review.id) { <article class="review-card"><div class="review-head"><span class="avatar">{{ review.user.fullName.slice(0, 1) }}</span><div><strong>{{ review.user.fullName }}</strong><small>{{ review.createdAt | date:'dd/MM/yyyy' }}</small></div><span class="review-stars"><svg lucideStar></svg>{{ review.rating }}/5</span></div><p>{{ review.content }}</p>@if (review.user.id === auth.user()?.id) { <div class="review-owner-actions"><button class="text-button" (click)="editReview(review)">Chỉnh sửa</button><button class="text-button danger-text" (click)="deleteReview(review)">Xóa</button></div> }</article> } } @else { <div class="review-placeholder">Chưa có nhận xét. Hãy là người đầu tiên chia sẻ đánh giá.</div> }
+              <form class="review-form" [formGroup]="reviewForm" (ngSubmit)="submitReview()"><label class="field-label">Tài liệu này có hữu ích không?</label><div class="review-submit"><button class="btn btn-outline" type="button" [class.vote-selected]="reviewForm.controls.rating.value === 1" (click)="reviewForm.controls.rating.setValue(1)">Hữu ích</button><button class="btn btn-outline" type="button" [class.vote-selected]="reviewForm.controls.rating.value === 0" (click)="reviewForm.controls.rating.setValue(0)">Không hữu ích</button><button class="btn btn-primary" type="submit" [disabled]="reviewLoading()">{{ editingReview() ? 'Cập nhật đánh giá' : 'Gửi đánh giá' }}</button></div><textarea class="form-input textarea" formControlName="content" rows="3" placeholder="Nhận xét thêm (không bắt buộc)..."></textarea></form>
+              @if (reviewsLoading()) { <div class="review-placeholder">Đang tải nhận xét…</div> } @else if (reviews().length) { @for (review of reviews(); track review.id) { <article class="review-card"><div class="review-head"><span class="avatar">{{ review.user.fullName.slice(0, 1) }}</span><div><strong>{{ review.user.fullName }}</strong><small>{{ review.createdAt | date:'dd/MM/yyyy' }}</small></div><span class="review-stars">{{ review.rating === 1 ? 'Hữu ích' : 'Không hữu ích' }}</span></div>@if (review.content) { <p>{{ review.content }}</p> }@if (review.user.id === auth.user()?.id) { <div class="review-owner-actions"><button class="text-button" (click)="editReview(review)">Chỉnh sửa</button><button class="text-button danger-text" (click)="deleteReview(review)">Xóa</button></div> }</article> } } @else { <div class="review-placeholder">Chưa có đánh giá. Hãy là người đầu tiên phản hồi.</div> }
               @if (reviewPages() > 1) { <nav class="pagination"><button class="page-button" [disabled]="reviewPage() === 0" (click)="loadReviews(reviewPage()-1)">‹</button><span class="muted">Trang {{ reviewPage()+1 }} / {{ reviewPages() }}</span><button class="page-button" [disabled]="reviewPage()+1 >= reviewPages()" (click)="loadReviews(reviewPage()+1)">›</button></nav> }
             </section>
           </main>
-          <aside class="detail-aside"><div class="stats-card"><span class="eyebrow">THỐNG KÊ</span><div><span><svg lucideEye></svg>Lượt xem</span><strong>{{ doc.viewCount ?? '—' }}</strong></div><div><span><svg lucideDownload></svg>Lượt tải</span><strong>{{ doc.downloadCount ?? '—' }}</strong></div><div><span><svg lucideStar></svg>Đánh giá</span><strong>{{ doc.averageRating != null ? (doc.averageRating | number:'1.1-1') : '—' }}</strong></div></div><div class="tip-card"><span>✦</span><strong>Chia sẻ tri thức</strong><p>Thấy tài liệu hữu ích? Hãy đánh giá để giúp bạn bè lựa chọn dễ dàng hơn.</p></div></aside>
+          <aside class="detail-aside"><div class="stats-card"><span class="eyebrow">THỐNG KÊ</span><div><span><svg lucideEye></svg>Lượt xem</span><strong>{{ doc.viewCount ?? '—' }}</strong></div><div><span><svg lucideExternalLink></svg>Lượt mở liên kết</span><strong>{{ doc.accessCount ?? '—' }}</strong></div><div><span>Hữu ích</span><strong>{{ helpfulPercent(doc) }}</strong></div></div><div class="tip-card"><span>✦</span><strong>Chia sẻ tri thức</strong><p>Đánh giá mức độ hữu ích để giúp bạn bè lựa chọn tài liệu.</p></div></aside>
         </div>
       }
-      @if (reportOpen()) { <div class="modal-backdrop" (click)="reportOpen.set(false)"><section class="modal-card" (click)="$event.stopPropagation()"><div class="modal-heading"><div><span class="eyebrow">BÁO CÁO NỘI DUNG</span><h2>Báo cáo tài liệu</h2></div><button class="icon-button" aria-label="Đóng" (click)="reportOpen.set(false)"><span>×</span></button></div><form [formGroup]="reportForm" (ngSubmit)="submitReport()"><label class="field-label">Lý do báo cáo<select class="form-input" formControlName="reason"><option value="">Chọn lý do</option><option value="WRONG_COURSE">Sai môn học</option><option value="WRONG_MAJOR">Sai chuyên ngành</option><option value="INAPPROPRIATE">Nội dung không phù hợp</option><option value="BROKEN_FILE">File lỗi hoặc không mở được</option><option value="COPYRIGHT">Vi phạm bản quyền</option><option value="OTHER">Lý do khác</option></select></label><label class="field-label spaced-label">Mô tả thêm<textarea class="form-input textarea" formControlName="description" rows="4" maxlength="2000" placeholder="Cung cấp thêm thông tin để quản trị viên xem xét (không bắt buộc)."></textarea></label>@if (reportForm.controls.reason.touched && reportForm.controls.reason.invalid) { <div class="field-error">Vui lòng chọn lý do báo cáo.</div> }@if (reportMessage() && !reportSubmitted()) { <div class="alert alert-error">{{ reportMessage() }}</div> }<div class="modal-actions"><button class="btn btn-outline" type="button" (click)="reportOpen.set(false)">Hủy</button><button class="btn btn-primary" type="submit" [disabled]="reportLoading()">{{ reportLoading() ? 'Đang gửi…' : 'Gửi báo cáo' }}</button></div></form></section></div> }
+      @if (reportOpen()) { <div class="modal-backdrop" (click)="reportOpen.set(false)"><section class="modal-card" (click)="$event.stopPropagation()"><div class="modal-heading"><div><span class="eyebrow">BÁO CÁO NỘI DUNG</span><h2>Báo cáo tài liệu</h2></div><button class="icon-button" aria-label="Đóng" (click)="reportOpen.set(false)"><span>×</span></button></div><form [formGroup]="reportForm" (ngSubmit)="submitReport()"><label class="field-label">Lý do báo cáo<select class="form-input" formControlName="reason"><option value="">Chọn lý do</option><option value="WRONG_COURSE">Sai môn học</option><option value="WRONG_MAJOR">Sai chuyên ngành</option><option value="INAPPROPRIATE">Nội dung không phù hợp</option><option value="BROKEN_LINK">Liên kết bị lỗi</option><option value="NO_ACCESS">Không có quyền truy cập</option><option value="COPYRIGHT">Vi phạm bản quyền</option><option value="OTHER">Lý do khác</option></select></label><label class="field-label spaced-label">Mô tả thêm<textarea class="form-input textarea" formControlName="description" rows="4" maxlength="2000" placeholder="Cung cấp thêm thông tin để quản trị viên xem xét (không bắt buộc)."></textarea></label>@if (reportForm.controls.reason.touched && reportForm.controls.reason.invalid) { <div class="field-error">Vui lòng chọn lý do báo cáo.</div> }@if (reportMessage() && !reportSubmitted()) { <div class="alert alert-error">{{ reportMessage() }}</div> }<div class="modal-actions"><button class="btn btn-outline" type="button" (click)="reportOpen.set(false)">Hủy</button><button class="btn btn-primary" type="submit" [disabled]="reportLoading()">{{ reportLoading() ? 'Đang gửi…' : 'Gửi báo cáo' }}</button></div></form></section></div> }
     </div>
   `,
 })
-export class DetailComponent implements OnInit, OnDestroy {
+export class DetailComponent implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly service = inject(DocumentService);
   readonly auth = inject(AuthService);
   private readonly destroyRef = inject(DestroyRef);
-  private readonly sanitizer = inject(DomSanitizer);
   readonly document = signal<Document | null>(null);
   readonly reviews = signal<Review[]>([]);
   readonly loading = signal(true);
@@ -64,10 +60,7 @@ export class DetailComponent implements OnInit, OnDestroy {
   readonly reviewSaved = signal(false);
   readonly editingReview = signal<number | null>(null);
   readonly error = signal('');
-  readonly previewLoading = signal(false);
-  readonly previewError = signal('');
-  readonly previewImageUrl = signal<string | null>(null);
-  readonly previewPdfUrl = signal<SafeResourceUrl | null>(null);
+  readonly linkMessage = signal('');
   readonly reportOpen = signal(false);
   readonly reportLoading = signal(false);
   readonly reportMessage = signal('');
@@ -75,15 +68,14 @@ export class DetailComponent implements OnInit, OnDestroy {
   readonly reviewPage = signal(0);
   readonly reviewPages = signal(1);
   readonly reviewForm = new FormGroup({
-    rating: new FormControl(5, { nonNullable: true, validators: [Validators.min(1), Validators.max(5)] }),
-    content: new FormControl('', { nonNullable: true, validators: [Validators.required, Validators.maxLength(2000)] }),
+    rating: new FormControl<number | null>(null, { validators: [Validators.required, Validators.min(0), Validators.max(1)] }),
+    content: new FormControl('', { nonNullable: true, validators: Validators.maxLength(2000) }),
   });
   readonly reportForm = new FormGroup({
-    reason: new FormControl<'' | 'WRONG_COURSE' | 'WRONG_MAJOR' | 'INAPPROPRIATE' | 'BROKEN_FILE' | 'COPYRIGHT' | 'OTHER'>('', { nonNullable: true, validators: Validators.required }),
+    reason: new FormControl<ReportReason | ''>('', { nonNullable: true, validators: Validators.required }),
     description: new FormControl('', { nonNullable: true, validators: Validators.maxLength(2000) }),
   });
   private docId = 0;
-  private previewObjectUrl: string | null = null;
 
   ngOnInit(): void {
     this.docId = Number(this.route.snapshot.paramMap.get('id'));
@@ -96,7 +88,7 @@ export class DetailComponent implements OnInit, OnDestroy {
           this.error.set('Tài liệu này hiện không khả dụng.');
         } else {
           this.document.set(document);
-          this.loadPreview(document);
+          this.reviewForm.controls.rating.setValue(document.myRating ?? null);
           this.service.registerView(this.docId).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({ error: () => undefined });
         }
         this.loading.set(false);
@@ -136,27 +128,24 @@ export class DetailComponent implements OnInit, OnDestroy {
       },
     });
   }
-  ngOnDestroy(): void {
-    if (this.previewObjectUrl) URL.revokeObjectURL(this.previewObjectUrl);
-  }
-  private loadPreview(document: Document): void {
-    const type = document.fileType || '';
-    if (type !== 'application/pdf' && !type.startsWith('image/')) return;
-    this.previewLoading.set(true);
-    this.service.preview(document.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (blob) => {
-        if (this.previewObjectUrl) URL.revokeObjectURL(this.previewObjectUrl);
-        this.previewObjectUrl = URL.createObjectURL(blob);
-        if (type === 'application/pdf') {
-          this.previewPdfUrl.set(this.sanitizer.bypassSecurityTrustResourceUrl(this.previewObjectUrl));
-        } else {
-          this.previewImageUrl.set(this.previewObjectUrl);
+  trustClass(doc: Document): string { return trustClass(doc); }
+  trustLabel(doc: Document): string { return trustLabel(doc); }
+  helpfulPercent(doc: Document): string { return helpfulPercent(doc); }
+  openLink(): void {
+    const doc = this.document();
+    if (!doc) return;
+    this.linkMessage.set('');
+    this.service.access(doc.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
+      next: (link) => {
+        const url = new URL(link.externalUrl);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+          this.linkMessage.set('Liên kết tài liệu không hợp lệ.');
+          return;
         }
-        this.previewLoading.set(false);
+        window.location.assign(url.href);
       },
-      error: () => {
-        this.previewLoading.set(false);
-        this.previewError.set('Không thể tải bản xem trước. Bạn vẫn có thể tải tệp xuống.');
+      error: (error: { error?: { message?: string } }) => {
+        this.linkMessage.set(error.error?.message || 'Không thể mở liên kết tài liệu.');
       },
     });
   }
@@ -167,19 +156,6 @@ export class DetailComponent implements OnInit, OnDestroy {
     request.pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: () => this.document.update((current) => current ? { ...current, isFavorite: !current.isFavorite } : current),
       error: () => { this.reviewMessage.set('Không thể cập nhật yêu thích.'); this.reviewSaved.set(false); },
-    });
-  }
-  download(): void {
-    const doc = this.document();
-    if (!doc) return;
-    this.service.download(doc.id).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (blob) => {
-        const url = URL.createObjectURL(blob);
-        const anchor = window.document.createElement('a');
-        anchor.href = url; anchor.download = doc.fileName || `tai-lieu-${doc.id}`; anchor.click();
-        URL.revokeObjectURL(url);
-      },
-      error: () => { this.reviewMessage.set('Không thể tải tài liệu. Vui lòng thử lại.'); this.reviewSaved.set(false); },
     });
   }
   loadReviews(page: number): void {
@@ -197,7 +173,7 @@ export class DetailComponent implements OnInit, OnDestroy {
   }
   editReview(review: Review): void {
     this.editingReview.set(review.id);
-    this.reviewForm.setValue({ rating: review.rating, content: review.content });
+    this.reviewForm.setValue({ rating: review.rating, content: review.content ?? '' });
     this.reviewMessage.set('');
   }
   deleteReview(review: Review): void {
@@ -218,6 +194,7 @@ export class DetailComponent implements OnInit, OnDestroy {
     if (this.reviewForm.invalid || this.reviewLoading()) return;
     this.reviewLoading.set(true);
     const { rating, content } = this.reviewForm.getRawValue();
+    if (rating === null) return;
     const request = this.editingReview()
       ? this.service.updateReview(this.editingReview()!, rating, content)
       : this.service.submitReview(this.docId, rating, content);
@@ -226,7 +203,8 @@ export class DetailComponent implements OnInit, OnDestroy {
         const wasEditing = this.editingReview() !== null;
         this.reviewLoading.set(false); this.reviewMessage.set(wasEditing ? 'Đã cập nhật nhận xét.' : 'Cảm ơn bạn đã gửi đánh giá.'); this.reviewSaved.set(true);
         this.editingReview.set(null);
-        this.reviewForm.reset({ rating: 5, content: '' });
+        this.document.update((current) => current ? { ...current, myRating: rating } : current);
+        this.reviewForm.reset({ rating, content: '' });
         this.loadReviews(wasEditing ? this.reviewPage() : 0);
         this.service.get(this.docId).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({ next: (doc) => this.document.set(doc) });
       },

@@ -6,7 +6,10 @@ from app.common.schemas import DTO
 
 
 class DocumentReportCreate(DTO):
-    reason: Literal["WRONG_COURSE", "WRONG_MAJOR", "INAPPROPRIATE", "BROKEN_FILE", "COPYRIGHT", "OTHER"]
+    reason: Literal[
+        "WRONG_COURSE", "WRONG_MAJOR", "INAPPROPRIATE",
+        "BROKEN_LINK", "NO_ACCESS", "COPYRIGHT", "OTHER",
+    ]
     description: str | None = Field(default=None, max_length=2000)
 
 

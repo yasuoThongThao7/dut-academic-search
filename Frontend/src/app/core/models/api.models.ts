@@ -1,6 +1,15 @@
 export type UserRole = 'STUDENT' | 'ADMIN';
 export type DocumentStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'HIDDEN';
-export type DocumentSort = 'recent' | 'popular' | 'rating' | 'downloads';
+export type DocumentSort = 'recent' | 'popular' | 'helpful' | 'accessed';
+export type TrustCode = 'INSUFFICIENT' | 'LOW' | 'MEDIUM' | 'HIGH';
+export type ReportReason =
+  | 'WRONG_COURSE'
+  | 'WRONG_MAJOR'
+  | 'INAPPROPRIATE'
+  | 'BROKEN_LINK'
+  | 'NO_ACCESS'
+  | 'COPYRIGHT'
+  | 'OTHER';
 
 export interface ApiEnvelope<T> {
   data: T;
@@ -92,6 +101,11 @@ export interface DocumentCategory {
   name: string;
 }
 
+export interface TrustInfo {
+  code: TrustCode;
+  label: string;
+}
+
 export interface Document {
   id: number;
   title: string;
@@ -105,14 +119,29 @@ export interface Document {
   course?: Course | null;
   courseOffering?: CourseOffering | null;
   viewCount?: number | null;
-  downloadCount?: number | null;
-  averageRating?: number | null;
+  /** Số lượt mở liên kết tài liệu. */
+  accessCount?: number | null;
+  /** Chỉ có khi chủ tài liệu hoặc admin xem; người khác lấy link qua POST /documents/{id}/access. */
+  externalUrl?: string | null;
+  storageSource?: string | null;
+  accessNote?: string | null;
+  helpfulCount?: number;
+  notHelpfulCount?: number;
+  /** Tỷ lệ hữu ích từ 0 đến 1, null khi chưa có đánh giá. */
+  helpfulRatio?: number | null;
   reviewCount?: number | null;
-  fileName?: string | null;
-  fileType?: string | null;
-  contentType?: string | null;
+  trust?: TrustInfo;
+  /** Đánh giá của người đang xem: 1 = Hữu ích, 0 = Không hữu ích, null = chưa đánh giá. */
+  myRating?: number | null;
   isFavorite?: boolean;
   rejectionReason?: string | null;
+}
+
+export interface AccessLink {
+  externalUrl: string;
+  storageSource?: string | null;
+  accessNote?: string | null;
+  accessCount: number;
 }
 
 export interface DocumentQuery {
@@ -123,6 +152,7 @@ export interface DocumentQuery {
   lecturerId?: number;
   termId?: number;
   categoryCode?: string;
+  minHelpfulPercent?: number;
   sort?: DocumentSort;
   page?: number;
   size?: number;
@@ -130,8 +160,9 @@ export interface DocumentQuery {
 
 export interface Review {
   id: number;
+  /** 1 = Hữu ích, 0 = Không hữu ích. */
   rating: number;
-  content: string;
+  content: string | null;
   createdAt: string;
   user: User;
 }
@@ -142,7 +173,7 @@ export interface DocumentReport {
   documentTitle: string;
   documentStatus: DocumentStatus;
   reporter: Pick<User, 'id' | 'studentId' | 'fullName'>;
-  reason: 'WRONG_COURSE' | 'WRONG_MAJOR' | 'INAPPROPRIATE' | 'BROKEN_FILE' | 'COPYRIGHT' | 'OTHER';
+  reason: ReportReason;
   description?: string | null;
   status: 'PENDING' | 'RESOLVED' | 'REJECTED';
   adminId?: number | null;
@@ -158,6 +189,9 @@ export interface DocumentMetadata {
   courseId: number;
   courseOfferingId: number | null;
   categoryCode: string;
+  externalUrl: string;
+  accessNote: string;
+  isShareConfirmed: boolean;
 }
 
 export interface DashboardStats {

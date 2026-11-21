@@ -4,7 +4,8 @@ from app.common.schemas import DTO
 
 
 class LoginRequest(DTO):
-    student_id: str = Field(min_length=1, max_length=32)
+    # Nhận MSSV hoặc email (email dài tới 255 ký tự)
+    student_id: str = Field(min_length=1, max_length=255)
     password: str
 
 
@@ -33,4 +34,3 @@ class AdminUserCreate(DTO):
     full_name: str = Field(min_length=1, max_length=200)
     email: EmailStr | None = None
     major_id: int | None = None
-

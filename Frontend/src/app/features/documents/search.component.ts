@@ -1,4 +1,4 @@
-import { DatePipe, DecimalPipe } from '@angular/common';
+import { DatePipe } from '@angular/common';
 import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -9,6 +9,7 @@ import { Document, DocumentQuery, DocumentSort, Faculty, Major, Course, Academic
 import { pageItems } from '../../core/services/api.service';
 import { CatalogService } from '../../core/services/catalog.service';
 import { DocumentService } from '../../core/services/document.service';
+import { helpfulPercent as formatHelpfulPercent } from '../../core/utils/document-ui.utils';
 
 type SearchForm = {
   q: FormControl<string>;
@@ -22,7 +23,7 @@ type SearchForm = {
 
 @Component({
   selector: 'app-search',
-  imports: [DatePipe, DecimalPipe, RouterLink, FormsModule, ReactiveFormsModule, LucideArrowDownWideNarrow, LucideDownload, LucideFileText, LucideGrid2X2, LucideHeart, LucideList, LucideSearch, LucideSlidersHorizontal, LucideStar, LucideX],
+  imports: [DatePipe, RouterLink, FormsModule, ReactiveFormsModule, LucideArrowDownWideNarrow, LucideDownload, LucideFileText, LucideGrid2X2, LucideHeart, LucideList, LucideSearch, LucideSlidersHorizontal, LucideStar, LucideX],
   template: `
     <div class="search-page">
       <div class="page-title-row"><div><span class="eyebrow">KHO HỌC LIỆU DUT</span><h1>Tìm tài liệu</h1><p class="muted">Tìm kiếm học liệu phù hợp cho hành trình học tập của bạn.</p></div><a class="btn btn-primary" routerLink="/documents/upload"><span>＋</span> Chia sẻ tài liệu</a></div>
@@ -42,7 +43,7 @@ type SearchForm = {
         </aside>
         <section class="results-area">
           @if (activeChips().length) { <div class="filter-chips">@for (chip of activeChips(); track chip.key) { <button class="filter-chip" (click)="removeFilter(chip.key)">{{ chip.label }} <svg lucideX></svg></button> }</div> }
-          <div class="results-toolbar"><div><strong>{{ totalLabel }}</strong><span class="muted"> · {{ currentPage() + 1 }} / {{ pageCount() }} trang</span></div><div class="toolbar-actions"><label class="sort-select"><svg lucideArrowDownWideNarrow></svg><select [value]="sort()" (change)="changeSort($any($event.target).value)"><option value="recent">Mới nhất</option><option value="popular">Phổ biến</option><option value="rating">Đánh giá cao</option><option value="downloads">Tải nhiều</option></select></label><div class="view-toggle"><button [class.view-active]="viewMode() === 'grid'" aria-label="Dạng lưới" (click)="viewMode.set('grid')"><svg lucideGrid2X2></svg></button><button [class.view-active]="viewMode() === 'list'" aria-label="Dạng danh sách" (click)="viewMode.set('list')"><svg lucideList></svg></button></div></div></div>
+          <div class="results-toolbar"><div><strong>{{ totalLabel }}</strong><span class="muted"> · {{ currentPage() + 1 }} / {{ pageCount() }} trang</span></div><div class="toolbar-actions"><label class="sort-select"><svg lucideArrowDownWideNarrow></svg><select [value]="sort()" (change)="changeSort($any($event.target).value)"><option value="recent">Mới nhất</option><option value="popular">Phổ biến</option><option value="helpful">Hữu ích</option><option value="accessed">Nhiều lượt mở</option></select></label><div class="view-toggle"><button [class.view-active]="viewMode() === 'grid'" aria-label="Dạng lưới" (click)="viewMode.set('grid')"><svg lucideGrid2X2></svg></button><button [class.view-active]="viewMode() === 'list'" aria-label="Dạng danh sách" (click)="viewMode.set('list')"><svg lucideList></svg></button></div></div></div>
           @if (loading()) { <div class="results-grid" [class.results-list]="viewMode() === 'list'">@for (_ of [1,2,3,4,5,6]; track $index) { <div class="skeleton-card"><span class="skeleton-line"></span><span class="skeleton-line wide"></span><span class="skeleton-line"></span><span class="skeleton-line short"></span></div> }</div> }
           @else if (error()) { <div class="empty-state error-state"><span class="empty-icon">!</span><strong>Không thể tải kết quả</strong><p>{{ error() }}</p><button class="btn btn-outline" (click)="refresh()">Thử lại</button></div> }
           @else if (documents().length) { <div class="results-grid" [class.results-list]="viewMode() === 'list'">
@@ -57,7 +58,7 @@ type SearchForm = {
                   @if (doc.courseOffering?.lecturer?.fullName) { <span>GV. {{ doc.courseOffering?.lecturer?.fullName }}</span> }
                   @if (doc.courseOffering?.academicTerm?.name) { <span>{{ doc.courseOffering?.academicTerm?.name }}</span> }
                 </div>
-                <div class="result-footer"><span>{{ doc.uploader?.fullName || 'Sinh viên DUT' }} <i>·</i> {{ doc.createdAt | date:'dd/MM/yyyy' }}</span><div class="doc-stats"><span><svg lucideDownload></svg>{{ doc.downloadCount ?? '—' }}</span><span><svg lucideStar></svg>{{ doc.averageRating != null ? (doc.averageRating | number:'1.1-1') : '—' }}</span><span><svg lucideFileText></svg>{{ doc.reviewCount ?? '—' }}</span></div></div>
+                <div class="result-footer"><span>{{ doc.uploader?.fullName || 'Sinh viên DUT' }} <i>·</i> {{ doc.createdAt | date:'dd/MM/yyyy' }}</span><div class="doc-stats"><span><svg lucideDownload></svg>{{ doc.accessCount ?? '—' }}</span><span><svg lucideStar></svg>{{ formatHelpfulPercent(doc) }}</span><span><svg lucideFileText></svg>{{ doc.reviewCount ?? '—' }}</span></div></div>
               </article>
             }
           </div> }
@@ -98,6 +99,7 @@ export class SearchComponent implements OnInit {
   readonly error = signal('');
   readonly sort = signal<DocumentSort>('recent');
   readonly viewMode = signal<'grid' | 'list'>('grid');
+  readonly formatHelpfulPercent = formatHelpfulPercent;
   readonly activeChips = computed(() => {
     const values = this.form.getRawValue();
     const result: { key: keyof SearchForm; label: string }[] = [];
@@ -209,7 +211,7 @@ export class SearchComponent implements OnInit {
 
   submitSearch(): void { this.applyUrlState(0); }
   changeSort(value: string): void {
-    if (['recent', 'popular', 'rating', 'downloads'].includes(value)) {
+    if (['recent', 'popular', 'helpful', 'accessed'].includes(value)) {
       this.sort.set(value as DocumentSort);
       this.applyUrlState(0);
     }

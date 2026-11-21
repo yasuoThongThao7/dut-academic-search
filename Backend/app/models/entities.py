@@ -132,12 +132,19 @@ class Document(TimestampMixin, Base):
     category_id: Mapped[int] = mapped_column(ForeignKey("document_categories.id", ondelete="RESTRICT"))
     status: Mapped[str] = mapped_column(Enum("PENDING", "APPROVED", "REJECTED", "HIDDEN", name="document_status"), default="PENDING")
     rejection_reason: Mapped[str | None] = mapped_column(Text)
-    original_file_name: Mapped[str] = mapped_column(String(255))
-    stored_file_name: Mapped[str] = mapped_column(String(100))
-    storage_key: Mapped[str] = mapped_column(String(255), unique=True)
-    file_type: Mapped[str] = mapped_column(String(100))
-    file_size: Mapped[int] = mapped_column(Integer)
+    # Liên kết ngoài (Google Drive / OneDrive / ...)
+    external_url: Mapped[str | None] = mapped_column(String(1000))
+    storage_source: Mapped[str | None] = mapped_column(String(100))
+    access_note: Mapped[str | None] = mapped_column(String(255))
+    is_share_confirmed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # Cột file cũ: chỉ còn cho dữ liệu cũ, tài liệu mới để NULL
+    original_file_name: Mapped[str | None] = mapped_column(String(255))
+    stored_file_name: Mapped[str | None] = mapped_column(String(100))
+    storage_key: Mapped[str | None] = mapped_column(String(255), unique=True)
+    file_type: Mapped[str | None] = mapped_column(String(100))
+    file_size: Mapped[int | None] = mapped_column(Integer)
     view_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Số lượt truy cập liên kết (tên cột giữ nguyên để không phải đổi dashboard/admin)
     download_count: Mapped[int] = mapped_column(Integer, default=0)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
     uploader: Mapped[User] = relationship()
@@ -152,10 +159,11 @@ class Document(TimestampMixin, Base):
 
 class Review(TimestampMixin, Base):
     __tablename__ = "reviews"
-    __table_args__ = (UniqueConstraint("document_id", "user_id", name="uq_review_document_user"), CheckConstraint("rating >= 1 AND rating <= 5"))
+    __table_args__ = (UniqueConstraint("document_id", "user_id", name="uq_review_document_user"), CheckConstraint("rating IN (0, 1)", name="ck_review_rating"))
     id: Mapped[int] = mapped_column(primary_key=True)
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="RESTRICT"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    # 1 = Hữu ích, 0 = Không hữu ích
     rating: Mapped[int] = mapped_column(Integer)
     content: Mapped[str | None] = mapped_column(Text)
     user: Mapped[User] = relationship()

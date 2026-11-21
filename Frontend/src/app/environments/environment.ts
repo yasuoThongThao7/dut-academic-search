@@ -1,3 +1,4 @@
 export const environment = {
-  apiBaseUrl: 'http://localhost:8000',
+  production: true,
+  apiUrl: 'https://dut-academic-search-production.up.railway.app'
 };
